@@ -1,0 +1,20 @@
+# Rust build output (keep Cargo.lock tracked for the application)
+/target/
+**/*.rs.bk
+
+# Local tooling and operating-system files
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db
+*~
+*.swp
+
+# Local credentials and runtime artifacts
+.env
+.env.*
+!.env.example
+*.log
+/tmp/
+/dist/
+/local/
