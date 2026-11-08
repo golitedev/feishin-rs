@@ -1,0 +1,39 @@
+[workspace]
+resolver = "3"
+members = ["apps/feishin-rs", "crates/*"]
+default-members = ["apps/feishin-rs"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+
+[workspace.dependencies]
+feishin-core = { path = "crates/core" }
+feishin-servers = { path = "crates/servers" }
+feishin-player-mpv = { path = "crates/player-mpv" }
+feishin-ui-egui = { path = "crates/ui-egui" }
+feishin-platform = { path = "crates/platform" }
+feishin-desktop = { path = "crates/desktop" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+egui = "0.37"
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
+tempfile = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

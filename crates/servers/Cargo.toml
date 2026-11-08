@@ -1,0 +1,17 @@
+[package]
+name = "feishin-servers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+feishin-core.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+md-5 = "0.10"
+uuid = { version = "1", features = ["v4"] }

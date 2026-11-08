@@ -1,6 +1,6 @@
 # Architecture
 
-Status: design only. No components described below have been implemented.
+Status: first implementation. See parity.md for unimplemented and unvalidated behavior.
 
 ## Product boundary
 
@@ -8,7 +8,7 @@ feishin-rs is a native Rust desktop music client. Rust owns the interface, serve
 
 Use egui for the interface and eframe for the desktop event loop and rendering integration. PDFCraft demonstrates this arrangement; its PDF engine and large crate hierarchy are not needed here. Begin with focused components and split crates where their boundaries are useful.
 
-## Planned workspace
+## Workspace
 
 ```text
 apps/feishin-rs/       Desktop entry point and component wiring
@@ -16,11 +16,11 @@ crates/core/          Domain models, library/queue state, application commands
 crates/servers/       Navidrome, Jellyfin, and OpenSubsonic adapters
 crates/player-mpv/    MPV process lifecycle, IPC commands, and events
 crates/ui-egui/       Views, widgets, themes, and input handling
-crates/platform/      Settings paths, credentials, and desktop integration
-xtask/                Rust project tooling when needed
+crates/platform/      Settings paths and credential-free atomic persistence
+crates/desktop/       Linux MPRIS service and desktop transport commands
 ```
 
-These paths are planned, not existing directories. The core must not depend on egui, eframe, or MPV transport details. Server adapters normalize their responses into shared domain models. The desktop entry point wires components together; the interface issues application commands and presents resulting state.
+The core does not depend on egui, eframe, or MPV transport details. Server adapters normalize their responses into shared domain models. The desktop entry point wires components together; the interface issues application commands and presents resulting state. No xtask is needed yet.
 
 ## Playback through MPV
 
@@ -29,9 +29,9 @@ These paths are planned, not existing directories. The core must not depend on e
 3. MPV events update observed state: position, duration, pause state, buffering, errors, and end of track.
 4. The core reconciles these events with the queue and sends updated state to the interface.
 
-Start one application-owned MPV process with an isolated IPC endpoint. Track its lifecycle and shut down only the process the application started. Use a Unix-domain socket on Linux/macOS and a named pipe on Windows when those platforms are implemented.
+One application-owned MPV process has an isolated, owner-only IPC endpoint. Dropping the handle terminates and reaps only that process. Unix-domain sockets are implemented; Windows named pipes are not. MPV 0.41+ is the tested baseline.
 
-Correlate command replies by request ID, subscribe to relevant property changes, and handle partial messages, timeouts, disconnects, and process exits. Connection recovery must not duplicate playback commands or advance the queue twice. Distinguish normal end of track from load failures, explicit stops, and replacement of the current track.
+Command replies are correlated by request ID and file events by MPV playlist entry ID and the application's load generation. Late EOF events from a previous selection cannot advance the new queue item. Natural EOF, failed loads, explicit stops, and replacement are distinct. Partial messages, timeouts, disconnects, and process exits are handled as errors; uncertain commands are not automatically retried. See [MPV details](mpv.md).
 
 Allow configuration of the MPV executable path and report a useful error if it is missing or unusable. Secure the IPC endpoint for the current user. Avoid shell interpolation when starting MPV. Do not expose stream credentials in command logs or diagnostics.
 
@@ -39,9 +39,13 @@ All audio decoding and output stays inside MPV. There is no browser player, embe
 
 ## Responsiveness and persistence
 
-Run network access, artwork decoding, and blocking IPC outside the UI thread. Send typed results and events back to the application and request a repaint when visible state changes. Choose the async runtime and channel crates during implementation.
+Network access and artwork decoding run on background threads using blocking reqwest; the MPV adapter owns a dedicated worker. Typed results arrive through standard-library channels. Session, browse, and load generations discard stale results. Artwork requests are bounded to four in flight, with bounded response/decode sizes and a session cache. Track painting is clipped to visible rows.
 
-Separate user preferences and resumable queue/session data from credentials. Use an appropriate credential store or explicitly documented secure alternative. Write persistent state atomically and handle malformed settings without crashing. Define schema versions before depending on saved state across releases.
+Playback reports are serialized on a separate worker to preserve start/progress/stop order. MPRIS uses its own worker and coalesced snapshots, so D-Bus does not block the GUI. The UI polls progress at a modest interval in addition to background repaint requests.
+
+On exit, the app queues the current stop report and waits at most two seconds for the reporting worker to flush. A slow or unavailable server can still miss its final report; shutdown does not wait indefinitely for network I/O.
+
+Settings schema version 1 stores only server profile, MPV executable path, volume, queue, repeat, and shuffle. Passwords and tokens are memory-only; authentication is required on each launch. tempfile stages owner-only files before atomic replacement. Unknown/corrupt settings are preserved, and writes are disabled for that session. Queue restoration does not automatically resume audio or restore the exact position.
 
 ## Verification boundaries
 

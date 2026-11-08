@@ -10,3 +10,6 @@ trim_trailing_whitespace = true
 
 [*.{md,yml,yaml}]
 indent_size = 2
+
+[crates/ui-egui/assets/fonts/OFL.txt]
+trim_trailing_whitespace = false

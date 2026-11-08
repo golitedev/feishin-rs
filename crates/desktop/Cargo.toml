@@ -1,0 +1,16 @@
+[package]
+name = "feishin-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+feishin-core.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5.19", default-features = false, features = ["async-io", "blocking-api"] }

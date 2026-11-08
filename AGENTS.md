@@ -2,7 +2,7 @@
 
 ## Scope and current state
 
-Read README.md, docs/architecture.md, and docs/roadmap.md before working here. This repository currently contains documentation only. Do not claim that planned features are implemented. Follow the user's requested scope; do not start application implementation during a documentation task.
+Read README.md, docs/architecture.md, docs/roadmap.md, and docs/parity.md before working here. A first native application is implemented; full Feishin parity is not achieved. Keep status claims tied to working behavior and tests. Follow the user's requested scope.
 
 ## Language and playback
 
@@ -32,7 +32,9 @@ Read README.md, docs/architecture.md, and docs/roadmap.md before working here. T
 ## Verification and commits
 
 - For documentation changes, check local links, consistency, and `git diff --check`. Do not invent build or test results.
-- Once Rust code exists, run formatting, scoped Clippy with warnings denied, and relevant tests. Add tests for meaningful behavior and regressions.
+- Run `cargo fmt --all --check`, scoped Clippy with warnings denied, and relevant tests. Add tests for meaningful behavior and regressions. The workspace limits builds to two jobs for this remote server.
+- Test visual changes in the native application. `--demo --demo-page <view> --screenshot <path.png>` captures a labeled synthetic library without credentials. On this headless server, use Xvfb. Compare against observed upstream screenshots without importing upstream source or assets.
+- MPV integration tests are explicit ignored tests requiring MPV 0.41+. Use synthetic media and `--ao=null`; never use private server credentials for fixtures.
 - Keep Cargo.lock tracked when the application workspace is created.
 - Update documentation when behavior, setup, or implementation status changes.
 - After every requested change, stage only files changed for that request and create a commit before the final response. State the commit at the top of the final response when code changes; include it for documentation changes as well.

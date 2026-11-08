@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: repository bootstrap. No player or application implementation exists.
+Status: first native implementation. Synthetic server-to-MPV listening and native rendering work; full UI and feature parity remain open. See [parity](parity.md) for evidence and gaps.
 
 ## 0. Repository foundation
 
@@ -11,38 +11,42 @@ Status: repository bootstrap. No player or application implementation exists.
 
 ## 1. Runnable foundation
 
-- [ ] Create a Cargo workspace and select supported Rust/crate versions.
-- [ ] Open a native egui/eframe window with basic navigation.
-- [ ] Add structured errors, redacted logging, settings paths, and persistence.
-- [ ] Establish formatting, linting, and focused test commands.
+- [x] Create a Cargo workspace and select supported Rust/crate versions.
+- [x] Open a native egui/eframe window with basic navigation.
+- [x] Add typed, credential-free errors, settings paths, and atomic persistence.
+- [ ] Add structured diagnostic logging with explicit redaction tests.
+- [x] Establish formatting, linting, and focused test commands.
 
 ## 2. MPV playback
 
-- [ ] Discover/configure MPV and manage an application-owned process.
-- [ ] Implement JSON IPC requests, replies, and property subscriptions.
-- [ ] Support load, play/pause, seek, volume, and stop.
-- [ ] Implement queue transitions and end-of-track handling.
-- [ ] Handle unavailable MPV, failed loads, timeouts, disconnects, and shutdown.
+- [x] Configure MPV executable and manage an application-owned process.
+- [x] Implement JSON IPC requests, replies, and property subscriptions.
+- [x] Support load, play/pause, seek, volume, and stop.
+- [x] Implement queue transitions and tagged end-of-track handling.
+- [x] Handle unavailable MPV, failed loads, timeouts, disconnects, and shutdown.
 
 ## 3. Server-backed listening
 
-- [ ] Choose and implement the first server adapter using public API documentation.
-- [ ] Add authentication, normalized library models, browsing, search, and artwork.
-- [ ] Play authenticated server streams through MPV.
-- [ ] Add the remaining Navidrome, Jellyfin, and OpenSubsonic adapters.
+- [x] Implement server adapters using public API documentation.
+- [x] Add authentication, normalized library models, browsing, search, and artwork.
+- [x] Play authenticated synthetic server streams through real MPV.
+- [x] Implement Navidrome/OpenSubsonic and Jellyfin adapters with protocol tests.
+- [ ] Validate against a real user-operated server and audio device.
 
 ## 4. Daily-use features
 
-- [ ] Playlists, favorites, sorting/filtering, and queue editing.
-- [ ] Lyrics and listening/scrobble behavior where supported.
-- [ ] Session restoration, keyboard shortcuts, and desktop media controls.
-- [ ] Document feature differences and server capability limitations.
+- [x] Basic playlist create/delete/add/remove, favorites, sorting/filtering, and queue editing.
+- [x] Plaintext lyrics and listening/scrobble behavior with protocol tests.
+- [x] Queue/preferences restoration, basic keyboard shortcuts, and Linux MPRIS controls.
+- [x] Document feature differences and server capability limitations.
+- [ ] Complete visual/interaction parity and advanced features listed in parity.md.
 
 ## 5. Distribution
 
 - [ ] Package and validate the Linux desktop application first.
 - [ ] Validate Windows and macOS support and their MPV IPC transports.
-- [ ] Document MPV installation requirements and third-party notices.
+- [x] Document MPV requirements and font/dependency provenance.
+- [ ] Generate and bundle complete third-party notices for release binaries.
 - [ ] Add release automation and installation documentation.
 
 Mark work complete only after it exists and has appropriate verification. Feature parity with Feishin is a long-term direction, not a current claim.
