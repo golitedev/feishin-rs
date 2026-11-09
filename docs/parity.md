@@ -1,38 +1,44 @@
 # Feishin parity and validation
 
-Status: first working Rust implementation, 2026-11-08. Full parity and pixel-identical UI have not been achieved. Do not interpret an implemented screen as complete parity with every upstream control or server capability.
+Status: 2026-11-09. The native Rust implementation has substantial server, library, and MPV functionality. Full feature parity and pixel identity are not established. Controls, protocol support, live-server evidence, and visual similarity are separate acceptance criteria.
 
-## Reference
+## Reference and visual evidence
 
-The observed reference is the local Feishin development checkout at commit `155e562138f39adaa985a01bc974936925518b46`. Its README screenshots of Home, album detail, artist detail, and fullscreen playback were viewed as visual references. No TypeScript, CSS, implementation, artwork, or translations were copied or translated into the Rust project. The interface is independently drawn in Rust, with separately sourced Poppins fonts.
+The current observed reference is the official Feishin 1.17.0 Linux desktop binary connected to a disposable Navidrome library (downloaded Debian archive SHA-256 `8f9833e4c16b40c4451e81c1c9deb35e0ce1658b7a8525d3f1487b08d85bc903`). Earlier work used public README screenshots at upstream commit `155e562138f39adaa985a01bc974936925518b46`. No upstream implementation, CSS, artwork, translations, or bundled fonts were imported or translated.
 
-## Implemented
+Current native work follows the observed title bar, 400 px sidebar, Inter typography, single featured-album hero, four-column genre tiles, album cards, playback strip, settings tabs, menus, and fullscreen player. Inter and Poppins are separately sourced OFL fonts. Native eframe screenshots are captured under Xvfb at 1440 × 900, using the same original fixture library as the observed application. Matching key geometry is evidence of progress, not a pixel-identical audit of every state.
 
-- Native dark layout: sidebar search/navigation/playlists/server card, featured albums, genre tiles, album grids, detail heroes, track tables, and playback strip.
-- Album, track, artist, playlist, search, settings, queue, and fullscreen now-playing/lyrics views.
-- Navidrome/OpenSubsonic token authentication and Jellyfin authentication, paginated normalized libraries, artwork, search, and detail requests.
-- External MPV load/pause/seek/volume/stop, property subscriptions, recoverable errors, secure process/socket lifecycle, and tagged file events.
-- Queue selection/removal/clear, play next/last, previous/next, shuffle without immediate repeated items in a cycle, and repeat off/all/one.
-- Track favorites, plaintext lyrics, playlist create/delete/add/remove. Playlist order and duplicate song occurrences are preserved.
-- Subsonic now-playing/scrobble and Jellyfin playback start/progress/stop reporting.
-- Credential-free versioned settings and queue restoration; no automatic playback or stored passwords.
-- Linux MPRIS metadata, playback commands, seeking, volume, shuffle/repeat, and Raise/Quit.
+## Working workflows
 
-## Verification
+| Area | Implemented behavior | Limits |
+| --- | --- | --- |
+| Library | Albums, tracks, artists, album artists, genres, folders, server search, local sorting/filtering, saved filters, quick search | Full library is initially fetched; large-library performance remains unmeasured |
+| Favorites and ratings | Track, album, and artist favorites; 0–5 numeric ratings; minimum-rating filters | Numeric ratings require Subsonic support; server permissions still apply |
+| Playlists | Create/delete, add/remove distinct occurrences, metadata/public visibility, move tracks, preserve duplicate songs | Native Navidrome smart rules use an editable JSON criteria object; no graphical rule builder |
+| Smart playlists | Navidrome native authentication and list/create/update/delete rules | Native API is version-sensitive; verified with Navidrome 0.64.2 |
+| Radio and downloads | Subsonic internet-radio CRUD/playback; original-file downloads to a chosen destination | Downloads do not constitute an indexed offline library; radio is server-dependent |
+| Lyrics | OpenSubsonic and Jellyfin timed lyrics, plaintext fallback, follow/seek, offset, alignment, font size | No independent external provider search, translation, or word-by-word karaoke renderer |
+| Playback | MPV load/pause/seek/volume/stop, repeat/shuffle/play-next, queue move/remove/select, prepared successor playback, Auto DJ | Remote buffering can interrupt transitions; no sample-accurate network-gapless guarantee or crossfade |
+| Audio | Device selection, exclusive-output request, channels/sample rate, speed/pitch, pause/resume fades, Weak/Yes/No gapless, audio/cache parameters, ReplayGain, preamp, ten-band EQ, normalization, technical stats | Output-driver support varies; no real sound device validated |
+| Analysis | Real MPV RMS/peak stereo meters | No FFT spectrum or full upstream visualizer catalogue |
+| Accounts and preferences | Multiple profiles, optional OS keyring, schema migration, queue/position restoration, themes/custom color JSON, fonts/layout, configurable shortcuts | English interface only; no arbitrary custom CSS |
+| Desktop | Linux MPRIS, native title bar, optional Linux notifications, bounded metadata-free diagnostics | No tray, Discord presence, casting/remote controller, or macOS/Windows media integration |
+| Distribution | Rust xtask checks, Linux desktop archive, fonts/licenses/dependency inventory and archive verification | No signed installer, AppImage, auto-updater, or Windows/macOS release package |
 
-Core tests exercise repeat/shuffle/removal. Server tests use synthetic loopback HTTP to exercise authentication, URL paths, pagination, protocol normalization, duplicate playlist entries, mutations, and stale playback reports. Real MPV tests use generated WAV files, null audio, and authenticated HTTP streams, including EOF queue advancement. Application regression tests cover stale sessions/search/stream events and delayed playlist results. UI tests render empty/sample views headlessly and exercise input. Native screenshots are captured through eframe under Xvfb for visual review. MPRIS is tested through an isolated D-Bus session.
+## Protocol and runtime verification
 
-These checks do not establish live Navidrome/Jellyfin compatibility, sound-device quality, every desktop shell's media controls, macOS/Windows operation, or pixel identity with upstream.
+Synthetic loopback HTTP tests cover Subsonic/Navidrome and Jellyfin authentication, pagination, normalized data, duplicate playlist occurrences, metadata/rating/radio/lyrics/transcoding/download/folder requests, smart rules, and playback-report identity. A real disposable Navidrome 0.64.2 instance verifies advanced mutations and round trips against generated FLACs, cover images, and timed lyrics. No user account or private library is required.
 
-## Remaining work
+Real MPV tests use synthetic media, null audio, and authenticated HTTP. They cover startup, property changes, settings, EQ, audio levels, prepared transitions, cancellation, EOF, and per-source header isolation. The application rejects obsolete session/browse/load/preparation results, preserves queue edits when Auto DJ returns, repairs cancelled successors, and carries exact source method into delayed Jellyfin reports. Linux MPRIS has an explicit isolated-D-Bus integration test. Windows MPV named-pipe transport has passed a GNU-target compilation check; no Windows runtime has been exercised.
 
-- Complete a screen-by-screen visual and interaction audit against a running current Feishin instance, including spacing, responsive layouts, menus, keyboard focus, and all settings. Current screenshots are a reference, not exhaustive behavior evidence.
-- Live-server verification and larger-library performance measurements. Initial connection currently fetches the full library, and filters/sorts are computed locally.
-- Smart playlists, ratings, advanced playlist editing/reordering, saved filters, server-specific navigation, and multiple saved server profiles.
-- Synchronized lyrics, lyric providers/translation, visualization, audio analysis, equalizer/output/device controls, ReplayGain and crossfade/gapless behavior.
-- Transcoding selection, downloads/offline mode, richer metadata, internet radio, casting/remote control, Discord integration, and any other upstream features not explicitly listed as implemented.
-- Light/custom themes, full localization, accessibility audit, configurable shortcuts, notifications/tray, and complete window/session preferences.
-- Secure persistent credential-store integration if desired; exact playback position restoration.
-- Windows named-pipe IPC, macOS integration/runtime validation, desktop installers, release builds, full third-party notices, and release automation.
+See [validation](validation.md) for executed commands and counts. Screenshots and disposable server data stay under ignored `local/`.
 
-The next validation target is a real server-backed listening session with a native visual audit. Add evidence and narrow limitations as each gap is closed.
+## Outstanding acceptance work
+
+- Complete the remaining workflows in the limits column and compare their behavior against the running reference. Do not substitute a visually present control for working behavior.
+- Audit every screen, context menu, modal, keyboard/focus state, narrow layout, loading/error state, and fullscreen view against upstream. Existing native screenshots do not prove identity.
+- Add live Jellyfin compatibility evidence, large-library measurements, a real sound-device session, hardware rendering checks, and desktop accessibility assessment.
+- Exercise OS credential persistence with a real unlocked desktop keyring, actual desktop notifications/media overlays, Windows named pipes at runtime, and macOS integration.
+- Validate release builds and platform installers on their target systems before advertising distribution support.
+
+The MIT implementation remains independent of GPL Feishin source. Feature completion must preserve the Rust-only application and MPV-only playback requirements.

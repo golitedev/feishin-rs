@@ -17,6 +17,9 @@ use std::{
 };
 use uuid::Uuid;
 
+mod features;
+mod folders;
+
 const PAGE: usize = 200;
 const MAX_ITEMS: usize = 100_000;
 const MAX_JSON: u64 = 16 * 1024 * 1024;
@@ -27,6 +30,10 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("{0}")]
+    InvalidInput(&'static str),
+    #[error("Could not write the download; check the destination and free disk space")]
+    Write,
     #[error(
         "Enter an HTTP or HTTPS server URL without credentials, query parameters, or fragments"
     )]
@@ -63,6 +70,8 @@ pub enum ItemKind {
 pub struct StreamSource {
     pub url: String,
     pub headers: Vec<(String, String)>,
+    /// Preserve with the specific load generation for delayed playback reports.
+    pub transcoded: bool,
 }
 impl fmt::Debug for StreamSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -88,7 +97,11 @@ pub struct Client {
     http: Http,
     base: Url,
     auth: Auth,
-    playback: Arc<Mutex<Option<(String, String)>>>,
+    playback: Arc<Mutex<Option<(String, String, String)>>>,
+    kind: ServerKind,
+    native: Arc<Mutex<Option<features::NativeAuth>>>,
+    source_methods: Arc<Mutex<std::collections::HashMap<String, bool>>>,
+    ratings: Arc<Mutex<std::collections::HashMap<String, u8>>>,
 }
 impl fmt::Debug for Client {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -119,6 +132,10 @@ impl Client {
                         token,
                     },
                     playback: Arc::new(Mutex::new(None)),
+                    kind: profile.kind,
+                    native: Arc::new(Mutex::new(None)),
+                    source_methods: Arc::new(Mutex::new(std::collections::HashMap::new())),
+                    ratings: Arc::new(Mutex::new(std::collections::HashMap::new())),
                 };
                 client.subsonic("ping", &[])?;
                 Ok(client)
@@ -147,6 +164,10 @@ impl Client {
                     base,
                     auth: Auth::Jellyfin { token, user_id },
                     playback: Arc::new(Mutex::new(None)),
+                    kind: profile.kind,
+                    native: Arc::new(Mutex::new(None)),
+                    source_methods: Arc::new(Mutex::new(std::collections::HashMap::new())),
+                    ratings: Arc::new(Mutex::new(std::collections::HashMap::new())),
                 })
             }
         }
@@ -414,29 +435,7 @@ impl Client {
     }
 
     pub fn stream(&self, track: &Track) -> Result<StreamSource> {
-        match &self.auth {
-            Auth::Subsonic { .. } => {
-                let mut url = self.subsonic_url("stream")?;
-                url.query_pairs_mut()
-                    .append_pair("id", &track.id)
-                    .append_pair("format", "raw");
-                Ok(StreamSource {
-                    url: url.into(),
-                    headers: vec![],
-                })
-            }
-            Auth::Jellyfin { token, .. } => {
-                let mut url = self.url(&["Audio", &track.id, "stream"])?;
-                url.query_pairs_mut().append_pair("Static", "true");
-                Ok(StreamSource {
-                    url: url.into(),
-                    headers: vec![(
-                        "Authorization".to_owned(),
-                        jellyfin_authorization(Some(token)),
-                    )],
-                })
-            }
-        }
+        self.stream_with_options(track, &feishin_core::features::StreamOptions::default())
     }
 
     pub fn cover(&self, id: &str, size: u32) -> Result<Vec<u8>> {
@@ -459,48 +458,7 @@ impl Client {
     }
 
     pub fn lyrics(&self, track: &Track) -> Result<String> {
-        match self.auth {
-            Auth::Subsonic { .. } => {
-                match self.subsonic("getLyricsBySongId", &[("id", track.id.clone())]) {
-                    Ok(value) => {
-                        if let Some(lyrics) = value
-                            .pointer("/lyricsList/structuredLyrics")
-                            .and_then(Value::as_array)
-                            .and_then(|a| a.first())
-                        {
-                            let lines = array(lyrics, "line")
-                                .iter()
-                                .map(|line| text(line, "value"))
-                                .collect::<Vec<_>>();
-                            if !lines.is_empty() {
-                                return Ok(lines.join("\n"));
-                            }
-                        }
-                    }
-                    Err(Error::Api(0 | 10 | 70)) | Err(Error::Http(404)) => (),
-                    Err(error) => return Err(error),
-                }
-                let value = self.subsonic(
-                    "getLyrics",
-                    &[
-                        ("artist", track.artist.clone()),
-                        ("title", track.title.clone()),
-                    ],
-                )?;
-                Ok(value
-                    .get("lyrics")
-                    .map(|v| text(v, "value"))
-                    .unwrap_or_default())
-            }
-            Auth::Jellyfin { .. } => {
-                let value = self.jellyfin_get(self.url(&["Audio", &track.id, "Lyrics"])?, &[])?;
-                Ok(array(&value, "Lyrics")
-                    .iter()
-                    .map(|line| text(line, "Text"))
-                    .collect::<Vec<_>>()
-                    .join("\n"))
-            }
-        }
+        Ok(self.lyrics_timed(track)?.plain_text())
     }
 
     /// Subsonic now-playing (`false`) or completed scrobble (`true`).
@@ -521,15 +479,30 @@ impl Client {
                 if submission {
                     self.playback_stopped(track, track.duration)
                 } else {
-                    let session = Uuid::new_v4().simple().to_string();
-                    let body = json!({"ItemId":track.id,"CanSeek":true,"IsPaused":false,"PositionTicks":0,"PlayMethod":"DirectPlay","PlaySessionId":session});
-                    self.jellyfin_post(&["Sessions", "Playing"], &body)?;
-                    *self.playback.lock().map_err(|_| Error::InvalidResponse)? =
-                        Some((track.id.clone(), session));
-                    Ok(())
+                    self.playback_started(track, self.play_method(track) == "Transcode")
                 }
             }
         }
+    }
+
+    /// Start reporting with the method retained from the exact loaded source.
+    /// Unlike the legacy `scrobble(track, false)` method, this remains correct
+    /// when another source for the same item is resolved before this report.
+    pub fn playback_started(&self, track: &Track, transcoded: bool) -> Result<()> {
+        if !matches!(self.auth, Auth::Jellyfin { .. }) {
+            return self.scrobble(track, false);
+        }
+        let session = Uuid::new_v4().simple().to_string();
+        let method = if transcoded {
+            "Transcode"
+        } else {
+            "DirectPlay"
+        };
+        let body = json!({"ItemId":track.id,"CanSeek":true,"IsPaused":false,"PositionTicks":0,"PlayMethod":method,"PlaySessionId":session});
+        self.jellyfin_post(&["Sessions", "Playing"], &body)?;
+        *self.playback.lock().map_err(|_| Error::InvalidResponse)? =
+            Some((track.id.clone(), session, method.into()));
+        Ok(())
     }
 
     /// Report Jellyfin position/pause changes. Subsonic has no equivalent session API.
@@ -537,10 +510,10 @@ impl Client {
         if !matches!(self.auth, Auth::Jellyfin { .. }) {
             return Ok(());
         }
-        let Some(session) = self.play_session(&track.id)? else {
+        let Some((session, method)) = self.play_session(&track.id)? else {
             return Ok(());
         };
-        self.jellyfin_post(&["Sessions","Playing","Progress"],&json!({"ItemId":track.id,"PositionTicks":ticks(position),"IsPaused":paused,"CanSeek":true,"PlayMethod":"DirectPlay","PlaySessionId":session}))
+        self.jellyfin_post(&["Sessions","Playing","Progress"],&json!({"ItemId":track.id,"PositionTicks":ticks(position),"IsPaused":paused,"CanSeek":true,"PlayMethod":method,"PlaySessionId":session}))
     }
 
     /// Report a stop at the observed position, including skips and explicit stops.
@@ -548,26 +521,26 @@ impl Client {
         if !matches!(self.auth, Auth::Jellyfin { .. }) {
             return Ok(());
         }
-        let Some(session) = self.play_session(&track.id)? else {
+        let Some((session, _method)) = self.play_session(&track.id)? else {
             return Ok(());
         };
         self.jellyfin_post(&["Sessions","Playing","Stopped"],&json!({"ItemId":track.id,"PositionTicks":ticks(position),"PlaySessionId":session,"Failed":false}))?;
         let mut playing = self.playback.lock().map_err(|_| Error::InvalidResponse)?;
         if playing
             .as_ref()
-            .is_some_and(|(id, current_session)| id == &track.id && current_session == &session)
+            .is_some_and(|(id, current_session, _)| id == &track.id && current_session == &session)
         {
             *playing = None;
         }
         Ok(())
     }
 
-    fn play_session(&self, track_id: &str) -> Result<Option<String>> {
+    fn play_session(&self, track_id: &str) -> Result<Option<(String, String)>> {
         let playing = self.playback.lock().map_err(|_| Error::InvalidResponse)?;
         Ok(playing
             .as_ref()
-            .filter(|(id, _)| id == track_id)
-            .map(|(_, session)| session.clone()))
+            .filter(|(id, _, _)| id == track_id)
+            .map(|(_, session, method)| (session.clone(), method.clone())))
     }
 
     fn jellyfin_post(&self, segments: &[&str], body: &Value) -> Result<()> {
@@ -797,6 +770,7 @@ impl Client {
             ("UserId", user_id.clone()),
             ("Recursive", "true".to_owned()),
             ("Fields", jellyfin_fields().to_owned()),
+            ("EnableUserData", "true".to_owned()),
         ];
         params.extend_from_slice(extra);
         self.jellyfin_pages(self.url(&["Artists"])?, &params)
@@ -850,7 +824,10 @@ impl Client {
             .get("subsonic-response")
             .ok_or(Error::InvalidResponse)?;
         match response.get("status").and_then(Value::as_str) {
-            Some("ok") => Ok(response.clone()),
+            Some("ok") => {
+                self.cache_ratings(response);
+                Ok(response.clone())
+            }
             Some("failed") => Err(Error::Api(
                 response
                     .pointer("/error/code")
@@ -1080,6 +1057,7 @@ fn subsonic_artist(value: &Value) -> Result<Artist> {
         name: text(value, "name"),
         cover_id: text(value, "coverArt"),
         album_count: number(value, "albumCount"),
+        favorite: subsonic_favorite(value),
     })
 }
 fn subsonic_playlist(value: &Value) -> Result<Playlist> {
@@ -1166,6 +1144,7 @@ fn jellyfin_artist(value: &Value) -> Result<Artist> {
         name: text(value, "Name"),
         cover_id: jellyfin_cover(value),
         album_count: number(value, "AlbumCount"),
+        favorite: jellyfin_favorite(value),
     })
 }
 fn jellyfin_playlist(value: &Value) -> Result<Playlist> {

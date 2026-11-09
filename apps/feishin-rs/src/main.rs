@@ -1,19 +1,37 @@
 //! Native application composition. No network or MPV I/O runs in the UI pass.
+mod credentials;
+mod mpv_arguments;
+mod playback;
+mod workflows;
 use feishin_core::{Album, Library, Playlist, Queue, Repeat, ServerProfile, Track};
 use feishin_desktop::{Desktop, DesktopCommand, DesktopState};
 use feishin_platform::Settings;
+use feishin_platform::credentials::{CredentialStore, OsCredentialStore};
+use feishin_platform::diagnostics::{DiagnosticEvent, Diagnostics};
 use feishin_player_mpv::{Command, Config, EndReason, Event, Player};
 use feishin_servers::{Client, ItemKind, StreamSource};
 use feishin_ui_egui::{Action, Page, View};
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     path::PathBuf,
     sync::mpsc,
     time::{Duration, Instant},
 };
 
+struct PendingCredential {
+    revision: u64,
+    password: zeroize::Zeroizing<String>,
+}
+struct Authenticated {
+    client: Client,
+    library: Library,
+    credential: Option<PendingCredential>,
+}
 enum Message {
-    Connected(u64, ServerProfile, Box<Result<(Client, Library), String>>),
+    Connected(u64, ServerProfile, Box<Result<Authenticated, String>>),
+    Feature(u64, Box<workflows::FeatureResult>),
+    PreparedSource(u64, u64, u64, u64, Result<StreamSource, String>),
+    AutoDj(u64, u64, Vec<Track>),
     Library(u64, u64, bool, Result<Library, String>),
     Detail(u64, u64, Result<Vec<Track>, String>),
     Artist(u64, u64, Result<Vec<Album>, String>),
@@ -23,10 +41,15 @@ enum Message {
         String,
         Result<(egui::ColorImage, egui::Color32), String>,
     ),
-    Lyrics(u64, String, Result<String, String>),
-    Favorite(u64, String, bool, Result<(), String>),
+    Favorite(u64, ItemKind, String, bool, Result<(), String>),
     Playlists(u64, Result<PlaylistUpdate, String>),
     Notice(u64, Result<(), String>),
+}
+
+impl Message {
+    fn feature(session: u64, result: workflows::FeatureResult) -> Self {
+        Self::Feature(session, Box::new(result))
+    }
 }
 
 struct PlaylistUpdate {
@@ -40,10 +63,12 @@ enum PlaylistMutation {
     Delete(String),
     Add(String, Vec<String>),
     Remove(String, usize),
+    Update(String, feishin_core::features::PlaylistMetadata),
+    Move(String, usize, usize),
 }
 
 enum ReportKind {
-    Start,
+    Start(bool),
     Complete,
     Progress(f64, bool),
     Stop(f64),
@@ -74,6 +99,7 @@ struct Application {
     desired_paused: bool,
     reported_at: Instant,
     pending_source: Option<StreamSource>,
+    stream_transcoded: bool,
     tx: mpsc::Sender<Message>,
     rx: mpsc::Receiver<Message>,
     session: u64,
@@ -86,6 +112,17 @@ struct Application {
     saved_at: Instant,
     dirty: bool,
     playlist_busy: bool,
+    inspected_track: Option<String>,
+    radio: bool,
+    restored_position: Option<(String, f64)>,
+    diagnostics: Option<Diagnostics>,
+    preparation: Option<playback::PreparedPlayback>,
+    retired_preparations: VecDeque<(u64, u64)>,
+    preparation_ticket: u64,
+    generation_counter: u64,
+    auto_dj_pending: bool,
+    keyring: Option<credentials::CredentialWorker>,
+    remembered_servers: HashSet<String>,
     screenshot: Option<PathBuf>,
     frame_count: u32,
     screenshot_requested: bool,
@@ -109,7 +146,9 @@ impl Application {
                     }
                 };
                 let result = match report.kind {
-                    ReportKind::Start => report.client.scrobble(&report.track, false),
+                    ReportKind::Start(transcoded) => {
+                        report.client.playback_started(&report.track, transcoded)
+                    }
                     ReportKind::Complete => report.client.scrobble(&report.track, true),
                     ReportKind::Progress(position, paused) => {
                         report
@@ -130,6 +169,8 @@ impl Application {
         let config_dir = feishin_platform::config_dir().ok();
         let mut persistence_enabled = true;
         let mut queue_profile = None;
+        let mut restored_position = None;
+        let mut remembered_servers = HashSet::new();
         if !demo {
             match config_dir
                 .as_deref()
@@ -143,7 +184,18 @@ impl Application {
                     }
                     view.mpv_path = settings.mpv_path;
                     view.playback.volume = settings.volume;
-                    view.queue = settings.queue;
+                    view.preferences = settings.preferences;
+                    view.profiles = settings.servers;
+                    remembered_servers = settings.remembered_servers.into_iter().collect();
+                    if view.preferences.resume_queue {
+                        view.queue = settings.queue;
+                    }
+                    if view.preferences.resume_position
+                        && let Some(track) = view.queue.current_track()
+                    {
+                        restored_position = Some((track.id.clone(), settings.playback_position));
+                        view.playback.position = settings.playback_position;
+                    }
                 }
                 Ok(None) => {
                     view.error =
@@ -162,12 +214,20 @@ impl Application {
             populate_demo(&mut view);
         }
         let normal_library = view.library.clone();
+        let keyring = credentials::CredentialWorker::start(tx.clone(), ctx.clone()).ok();
+        let diagnostics = if !demo {
+            config_dir
+                .as_deref()
+                .and_then(|dir| Diagnostics::start(dir).ok())
+        } else {
+            None
+        };
         let desktop = if cfg!(target_os = "linux") && !demo {
             Desktop::start().ok()
         } else {
             None
         };
-        Self {
+        let application = Self {
             view,
             client: None,
             normal_library,
@@ -182,6 +242,7 @@ impl Application {
             desired_paused: true,
             reported_at: Instant::now(),
             pending_source: None,
+            stream_transcoded: false,
             tx,
             rx,
             session: 0,
@@ -194,11 +255,33 @@ impl Application {
             saved_at: Instant::now(),
             dirty: false,
             playlist_busy: false,
+            inspected_track: None,
+            radio: false,
+            restored_position,
+            diagnostics,
+            preparation: None,
+            retired_preparations: VecDeque::new(),
+            preparation_ticket: 0,
+            generation_counter: 0,
+            auto_dj_pending: false,
+            keyring,
+            remembered_servers,
             screenshot,
             frame_count: 0,
             screenshot_requested: false,
             started_at: Instant::now(),
+        };
+        if !demo
+            && application
+                .remembered_servers
+                .contains(&feishin_platform::credentials::account_key(
+                    &application.view.profile,
+                ))
+            && let Some(worker) = &application.keyring
+        {
+            let _ = worker.load(application.session, application.view.profile.clone());
         }
+        application
     }
 
     fn background(&self, ctx: &egui::Context, work: impl FnOnce() -> Message + Send + 'static) {
@@ -221,8 +304,10 @@ impl Application {
 
     fn stop(&mut self) {
         self.finish_active(false);
+        self.invalidate_preparation();
+        self.auto_dj_pending = false;
         self.seek_target = None;
-        self.stream = self.stream.wrapping_add(1);
+        self.stream = self.allocate_generation();
         self.pending_source = None;
         self.send(Command::Stop);
         self.view.playback.paused = true;
@@ -232,6 +317,12 @@ impl Application {
     }
 
     fn report(&mut self, track: Track, kind: ReportKind) {
+        if self.radio
+            || !self.view.preferences.scrobble_enabled
+            || self.view.preferences.private_mode
+        {
+            return;
+        }
         if let Some(client) = self.client.clone()
             && self
                 .report_tx
@@ -278,7 +369,10 @@ impl Application {
             return;
         };
         self.finish_active(false);
-        self.stream = self.stream.wrapping_add(1);
+        self.radio = false;
+        self.invalidate_preparation();
+        self.auto_dj_pending = false;
+        self.stream = self.allocate_generation();
         self.pending_source = None;
         self.send(Command::Stop);
         self.view.playback.position = 0.0;
@@ -287,11 +381,14 @@ impl Application {
         self.desired_paused = false;
         self.view.playback.buffering = true;
         let (session, stream) = (self.session, self.stream);
+        let stream_options = self.view.preferences.stream.clone();
         self.background(ctx, move || {
             Message::Stream(
                 session,
                 stream,
-                client.stream(&track).map_err(|e| e.to_string()),
+                client
+                    .stream_with_options(&track, &stream_options)
+                    .map_err(|e| e.to_string()),
             )
         });
         self.dirty = true;
@@ -301,6 +398,7 @@ impl Application {
         if self.player_ready
             && let Some(source) = self.pending_source.take()
         {
+            self.stream_transcoded = source.transcoded;
             self.send(Command::Load {
                 generation: self.stream,
                 paused: self.desired_paused,
@@ -312,19 +410,54 @@ impl Application {
     }
 
     fn action(&mut self, ctx: &egui::Context, action: Action) {
+        let rebuild_preparation = matches!(
+            &action,
+            Action::Play { .. }
+                | Action::QueueNext(_)
+                | Action::QueueLast(_)
+                | Action::Next
+                | Action::Previous
+                | Action::SelectQueue(_)
+                | Action::RemoveQueue(_)
+                | Action::ClearQueue
+                | Action::ToggleShuffle
+                | Action::CycleRepeat
+                | Action::ApplyPlaybackSettings(_)
+                | Action::SavePreferences(_)
+                | Action::MoveQueue { .. }
+        );
+        if rebuild_preparation {
+            self.invalidate_preparation();
+        }
         match action {
             Action::Connect { profile, password } => {
+                let profile = match feishin_platform::credentials::validate_profile(profile) {
+                    Ok(profile) => profile,
+                    Err(error) => {
+                        self.view.error = Some(error.to_string());
+                        return;
+                    }
+                };
+                if let Some(log) = &self.diagnostics {
+                    log.event(DiagnosticEvent::ConnectStarted);
+                }
                 self.stop();
                 self.session = self.session.wrapping_add(1);
                 self.browse = self.browse.wrapping_add(1);
                 self.client = None;
+                self.clear_server_features();
                 self.view.connected = false;
                 self.view.clear_navigation_history();
                 self.playlist_busy = false;
                 self.view.loading = true;
                 self.view.error = None;
-                if self.view.demo || self.queue_profile.as_ref() != Some(&profile) {
+                let same_account = self.queue_profile.as_ref().is_some_and(|saved| {
+                    feishin_platform::credentials::account_key(saved)
+                        == feishin_platform::credentials::account_key(&profile)
+                });
+                if self.view.demo || !same_account {
                     self.view.queue.clear();
+                    self.restored_position = None;
                 }
                 self.view.demo = false;
                 self.view.library = Library::default();
@@ -339,11 +472,23 @@ impl Application {
                 self.view.password.clear();
                 self.view.lyrics.clear();
                 let session = self.session;
+                let remember = self.view.remember_password;
+                let revision = self.keyring.as_ref().map_or(0, |worker| worker.advance());
+                let password = zeroize::Zeroizing::new(password);
                 self.background(ctx, move || {
-                    let result = Client::login(profile.clone(), &password).and_then(|client| {
+                    let result = (|| {
+                        let client = Client::login(profile.clone(), &password)?;
+                        if profile.kind == feishin_core::ServerKind::Navidrome {
+                            let _ = client.enable_navidrome(&password);
+                        }
                         let library = client.library()?;
-                        Ok((client, library))
-                    });
+                        Ok::<_, feishin_servers::Error>(Authenticated {
+                            client,
+                            library,
+                            credential: remember
+                                .then_some(PendingCredential { revision, password }),
+                        })
+                    })();
                     Message::Connected(
                         session,
                         profile,
@@ -352,9 +497,13 @@ impl Application {
                 });
             }
             Action::Disconnect => {
+                if let Some(worker) = &self.keyring {
+                    worker.advance();
+                }
                 self.stop();
                 self.session = self.session.wrapping_add(1);
                 self.client = None;
+                self.clear_server_features();
                 self.view.connected = false;
                 self.view.clear_navigation_history();
                 self.view.loading = false;
@@ -363,6 +512,7 @@ impl Application {
                 self.search_library = None;
                 self.view.library = Library::default();
                 self.view.queue.clear();
+                self.restored_position = None;
                 self.view.detail_tracks.clear();
                 self.view.artist_albums.clear();
                 self.view.selected_album = None;
@@ -498,7 +648,8 @@ impl Application {
             }
             Action::Volume(volume) => {
                 if volume.is_finite() {
-                    self.view.playback.volume = volume.clamp(0.0, 100.0);
+                    self.view.playback.volume =
+                        volume.clamp(0.0, self.view.preferences.playback.volume_max);
                     self.send(Command::Volume(self.view.playback.volume));
                     self.dirty = true;
                 }
@@ -535,16 +686,28 @@ impl Application {
                 self.view.queue.clear();
                 self.dirty = true;
             }
-            Action::Favorite { track_id, favorite } => {
+            Action::Favorite {
+                track_id: ref id,
+                favorite,
+            }
+            | Action::FavoriteAlbum { ref id, favorite }
+            | Action::FavoriteArtist { ref id, favorite } => {
+                let id = id.clone();
+                let kind = match &action {
+                    Action::FavoriteAlbum { .. } => ItemKind::Album,
+                    Action::FavoriteArtist { .. } => ItemKind::Artist,
+                    _ => ItemKind::Track,
+                };
                 if let Some(client) = self.client.clone() {
                     let session = self.session;
                     self.background(ctx, move || {
                         Message::Favorite(
                             session,
-                            track_id.clone(),
+                            kind,
+                            id.clone(),
                             favorite,
                             client
-                                .set_favorite(&track_id, ItemKind::Track, favorite)
+                                .set_favorite(&id, kind, favorite)
                                 .map_err(|e| e.to_string()),
                         )
                     });
@@ -564,10 +727,12 @@ impl Application {
                     let session = self.session;
                     self.view.lyrics = "Loading lyrics…".into();
                     self.background(ctx, move || {
-                        Message::Lyrics(
+                        Message::feature(
                             session,
-                            id,
-                            client.lyrics(&track).map_err(|e| e.to_string()),
+                            workflows::FeatureResult::Lyrics(
+                                id,
+                                client.lyrics_timed(&track).map_err(|e| e.to_string()),
+                            ),
                         )
                     });
                 }
@@ -575,6 +740,10 @@ impl Application {
             Action::SaveSettings { mpv_path } => {
                 if mpv_path.trim().is_empty() {
                     self.view.error = Some("Choose an MPV executable path.".into());
+                    return;
+                }
+                if let Err(error) = mpv_arguments::parse(&self.view.preferences.mpv_arguments) {
+                    self.view.error = Some(error.into());
                     return;
                 }
                 self.stop();
@@ -597,7 +766,9 @@ impl Application {
             Action::RemovePlaylistTrack { playlist_id, index } => {
                 self.mutate_playlist(ctx, PlaylistMutation::Remove(playlist_id, index))
             }
+            action => self.feature_action(ctx, action),
         }
+        self.prepare_next(ctx);
     }
 
     fn mutate_playlist(&mut self, ctx: &egui::Context, mutation: PlaylistMutation) {
@@ -632,6 +803,16 @@ impl Application {
                         }
                         PlaylistMutation::Remove(id, index) => {
                             client.remove_playlist_track(&id, index)?;
+                            let tracks = client.playlist_tracks(&id)?;
+                            (Some((id, tracks)), None)
+                        }
+                        PlaylistMutation::Update(id, metadata) => {
+                            client.update_playlist(&id, &metadata)?;
+                            let tracks = client.playlist_tracks(&id)?;
+                            (Some((id, tracks)), None)
+                        }
+                        PlaylistMutation::Move(id, from, to) => {
+                            client.move_playlist_track(&id, from, to)?;
                             let tracks = client.playlist_tracks(&id)?;
                             (Some((id, tracks)), None)
                         }
@@ -687,6 +868,15 @@ impl Application {
                     .map_err(|e| e.to_string()),
                 )
             });
+            if playlist {
+                self.load_playlist_metadata(
+                    ctx,
+                    self.view
+                        .selected_playlist
+                        .as_ref()
+                        .map_or(String::new(), |p| p.id.clone()),
+                );
+            }
         } else if self.view.demo {
             self.view.detail_tracks = self
                 .normal_library
@@ -755,19 +945,51 @@ impl Application {
                 Message::Connected(session, profile, result) if session == self.session => {
                     self.view.loading = false;
                     match *result {
-                        Ok((client, library)) => {
+                        Ok(Authenticated {
+                            client,
+                            library,
+                            credential,
+                        }) => {
+                            self.view.capabilities = client.capabilities();
+                            self.view.ratings = client.ratings();
                             self.client = Some(client);
                             self.normal_library = library.clone();
                             self.view.library = library;
                             self.view.connected = true;
                             self.queue_profile = Some(profile.clone());
-                            self.view.profile = profile;
+                            self.upsert_profile(profile.clone());
+                            self.view.profile = profile.clone();
                             self.view.page = Page::Home;
-                            self.view.message =
-                                Some("Connected. Select an album to start listening.".into());
+                            self.view.message = None;
+                            if let Some(PendingCredential { revision, password }) = credential
+                                && self.view.remember_password
+                                && let Some(worker) = &self.keyring
+                                && worker.current() == revision
+                                && let Err(error) =
+                                    worker.save(self.session, revision, profile.clone(), password)
+                            {
+                                self.view.message = Some(error);
+                            }
+                            if !self.view.remember_password
+                                && self
+                                    .remembered_servers
+                                    .remove(&feishin_platform::credentials::account_key(&profile))
+                                && let Some(worker) = &self.keyring
+                                && let Err(error) = worker.delete(self.session, profile)
+                            {
+                                self.view.message = Some(error);
+                            }
+                            if let Some(log) = &self.diagnostics {
+                                log.event(DiagnosticEvent::Connected);
+                            }
                             self.dirty = true;
                         }
-                        Err(error) => self.view.error = Some(error),
+                        Err(error) => {
+                            self.view.error = Some(error);
+                            if let Some(log) = &self.diagnostics {
+                                log.event(DiagnosticEvent::ConnectionFailed);
+                            }
+                        }
                     }
                 }
                 Message::Library(session, browse, searching, result)
@@ -785,6 +1007,9 @@ impl Application {
                         Ok(library) => {
                             self.normal_library = library.clone();
                             self.view.library = library;
+                            if let Some(client) = &self.client {
+                                self.view.ratings = client.ratings();
+                            }
                         }
                         Err(e) => self.view.error = Some(e),
                     }
@@ -829,16 +1054,7 @@ impl Application {
                     match result {
                         Ok(source) => {
                             self.pending_source = Some(source);
-                            if self.player.is_none() {
-                                let config = Config {
-                                    executable: self.view.mpv_path.clone(),
-                                    ..Default::default()
-                                };
-                                match Player::spawn(config) {
-                                    Ok(player) => self.player = Some(player),
-                                    Err(error) => self.view.error = Some(error.to_string()),
-                                }
-                            }
+                            self.ensure_player();
                             self.load_pending();
                         }
                         Err(error) => {
@@ -861,16 +1077,9 @@ impl Application {
                         self.view.mark_artwork_unavailable(id);
                     }
                 }
-                Message::Lyrics(session, id, result) if session == self.session => {
-                    if self.view.queue.current_track().is_some_and(|t| t.id == id) {
-                        self.view.lyrics = match result {
-                            Ok(text) if !text.trim().is_empty() => text,
-                            Ok(_) => "No lyrics available for this track.".into(),
-                            Err(e) => e,
-                        };
-                    }
-                }
-                Message::Favorite(session, id, favorite, result) if session == self.session => {
+                Message::Favorite(session, kind, id, favorite, result)
+                    if session == self.session =>
+                {
                     match result {
                         Ok(()) => {
                             for track in self
@@ -881,9 +1090,56 @@ impl Application {
                                 .chain(&mut self.view.detail_tracks)
                                 .chain(&mut self.view.queue.tracks)
                                 .chain(&mut self.normal_library.tracks)
+                                .chain(self.search_library.iter_mut().flat_map(|l| &mut l.tracks))
+                                .chain(self.active_track.iter_mut())
                             {
-                                if track.id == id {
+                                if kind == ItemKind::Track && track.id == id {
                                     track.favorite = favorite;
+                                }
+                            }
+                            if kind == ItemKind::Album {
+                                for album in self
+                                    .view
+                                    .library
+                                    .albums
+                                    .iter_mut()
+                                    .chain(&mut self.normal_library.albums)
+                                    .chain(&mut self.view.artist_albums)
+                                    .chain(
+                                        self.search_library.iter_mut().flat_map(|l| &mut l.albums),
+                                    )
+                                    .chain(self.view.selected_album.iter_mut())
+                                {
+                                    if album.id == id {
+                                        album.favorite = favorite;
+                                    }
+                                }
+                            }
+                            if kind == ItemKind::Artist {
+                                for artist in self
+                                    .view
+                                    .library
+                                    .artists
+                                    .iter_mut()
+                                    .chain(&mut self.normal_library.artists)
+                                    .chain(&mut self.view.album_artists)
+                                    .chain(
+                                        self.search_library.iter_mut().flat_map(|l| &mut l.artists),
+                                    )
+                                    .chain(self.view.selected_artist.iter_mut())
+                                {
+                                    if artist.id == id {
+                                        artist.favorite = favorite;
+                                    }
+                                }
+                            }
+                            if kind == ItemKind::Track
+                                && let Some(prepared) = &mut self.preparation
+                            {
+                                for track in &mut prepared.queue.tracks {
+                                    if track.id == id {
+                                        track.favorite = favorite;
+                                    }
                                 }
                             }
                             self.dirty = true;
@@ -933,6 +1189,42 @@ impl Application {
                 }
                 Message::Notice(session, Err(error)) if session == self.session => {
                     self.view.message = Some(error);
+                }
+                Message::Feature(session, result) if session == self.session => {
+                    self.handle_feature(ctx, *result)
+                }
+                Message::PreparedSource(session, current, ticket, generation, result)
+                    if session == self.session =>
+                {
+                    self.prepared_source(current, ticket, generation, result)
+                }
+                Message::AutoDj(session, generation, mut tracks)
+                    if session == self.session && generation == self.stream =>
+                {
+                    self.auto_dj_pending = false;
+                    if !self.view.preferences.auto_dj.enabled {
+                        continue;
+                    }
+                    if !self.view.preferences.auto_dj.allow_duplicates {
+                        let mut existing: HashSet<_> = self
+                            .view
+                            .queue
+                            .tracks
+                            .iter()
+                            .map(|t| t.id.clone())
+                            .collect();
+                        tracks.retain(|t| existing.insert(t.id.clone()));
+                    }
+                    if !tracks.is_empty() {
+                        self.invalidate_preparation();
+                        self.view.queue.append(tracks);
+                        self.dirty = true;
+                        if self.active_track.is_none() && self.view.queue.advance(true).is_some() {
+                            self.play_current(ctx);
+                        } else {
+                            self.prepare_next(ctx);
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -1033,14 +1325,25 @@ impl Application {
     }
 
     fn player_event(&mut self, ctx: &egui::Context, event: Event) {
+        if let Event::FileLoaded(generation) = &event
+            && *generation != self.stream
+            && !self.adopt_prepared(*generation)
+        {
+            self.recover_cancelled_preparation(ctx, *generation);
+        }
         match event {
             Event::Ready => {
                 self.player_ready = true;
+                self.send(Command::ListAudioDevices);
+                self.send(Command::EnableAnalysis(
+                    self.view.preferences.visualizer_enabled,
+                ));
                 self.load_pending();
             }
-            Event::Pause(paused) if self.active_track.is_some() => {
+            Event::Pause(paused)
+                if self.active_track.is_some() && paused == self.desired_paused =>
+            {
                 self.view.playback.paused = paused;
-                self.desired_paused = paused;
             }
             Event::Position(value) => {
                 self.view.playback.position = value;
@@ -1057,26 +1360,80 @@ impl Application {
             Event::Duration(value) => self.view.playback.duration = value,
             Event::Volume(value) => self.view.playback.volume = value,
             Event::Buffering(value) => self.view.playback.buffering = value,
+            Event::AudioDevices(devices) => self.view.audio_devices = devices,
+            Event::AudioStats(stats) => self.view.audio_stats = stats,
+            Event::Speed(speed) => self.view.preferences.playback.speed = speed,
+            Event::AudioLevels {
+                left_rms_db,
+                right_rms_db,
+                left_peak_db,
+                right_peak_db,
+            } => {
+                self.view.audio_levels = if self.view.playback.paused {
+                    [-120.0; 4]
+                } else {
+                    [left_rms_db, right_rms_db, left_peak_db, right_peak_db]
+                }
+            }
+            Event::PreparedNext(generation) => {
+                if let Some(prepared) = self
+                    .preparation
+                    .as_mut()
+                    .filter(|p| p.generation == generation)
+                {
+                    prepared.ready = true;
+                }
+            }
             Event::FileLoaded(generation) if generation == self.stream => {
                 self.view.playback.buffering = false;
                 self.send(Command::Pause(self.desired_paused));
                 self.view.playback.paused = self.desired_paused;
                 if let Some(track) = self.view.queue.current_track().cloned() {
+                    if let Some((id, position)) = self.restored_position.take()
+                        && id == track.id
+                        && position > 0.0
+                    {
+                        self.seek_target = Some(position);
+                        self.send(Command::Seek(position));
+                    }
                     self.active_track = Some(track.clone());
-                    self.report(track, ReportKind::Start);
+                    if self.view.preferences.notifications && !self.view.preferences.private_mode {
+                        let notification = track.clone();
+                        let session = self.session;
+                        self.background(ctx, move || {
+                            Message::Notice(
+                                session,
+                                feishin_platform::notifications::now_playing(&notification)
+                                    .map_err(|e| e.to_string()),
+                            )
+                        });
+                    }
+                    if let Some(log) = &self.diagnostics {
+                        log.event(DiagnosticEvent::PlaybackStarted);
+                    }
+                    self.report(track, ReportKind::Start(self.stream_transcoded));
                     self.reported_at = Instant::now();
                 }
+                self.prepare_next(ctx);
             }
             Event::EndFile {
                 generation,
                 reason: EndReason::Eof,
             } if generation == self.stream => {
                 self.finish_active(true);
-                if self.view.queue.advance(true).is_some() {
+                if let Some(generation) = self
+                    .preparation
+                    .as_ref()
+                    .filter(|p| p.ready)
+                    .map(|p| p.generation)
+                {
+                    self.adopt_prepared(generation);
+                } else if self.view.queue.advance(true).is_some() {
                     self.play_current(ctx);
                 } else {
                     self.view.playback.paused = true;
                     self.view.playback.buffering = false;
+                    self.request_auto_dj(ctx);
                 }
             }
             Event::EndFile {
@@ -1113,11 +1470,15 @@ impl Application {
         }
         if let Some(dir) = &self.config_dir {
             let settings = Settings {
-                version: 1,
+                version: 2,
                 server: self.queue_profile.clone(),
                 mpv_path: self.view.mpv_path.clone(),
                 volume: self.view.playback.volume,
                 queue: self.view.queue.clone(),
+                servers: self.view.profiles.clone(),
+                preferences: self.view.preferences.clone(),
+                playback_position: self.view.playback.position,
+                remembered_servers: self.remembered_servers.iter().cloned().collect(),
             };
             match feishin_platform::save(dir, &settings) {
                 Ok(()) => self.dirty = false,
@@ -1155,7 +1516,12 @@ impl eframe::App for Application {
         }
         ctx.request_repaint_after(Duration::from_millis(100));
         self.frame_count = self.frame_count.saturating_add(1);
-        if self.screenshot.is_some() && !self.screenshot_requested && self.frame_count > 10 {
+        if self.screenshot.is_some()
+            && !self.screenshot_requested
+            && self.frame_count > 10
+            && (!self.view.loading && self.artwork_pending.is_empty()
+                || self.started_at.elapsed() > Duration::from_secs(20))
+        {
             self.screenshot_requested = true;
             if let Some(path) = self.screenshot.take() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
@@ -1228,6 +1594,7 @@ fn populate_demo(view: &mut View) {
                 name: artist.into(),
                 album_count: 2,
                 cover_id: id.clone(),
+                favorite: false,
             });
         }
         for (number, song) in [
@@ -1299,10 +1666,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut demo = false;
     let mut demo_page = None;
     let mut screenshot = None;
+    let mut connect_profile = None;
+    let mut password_file = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--demo" => demo = true,
+            "--connect-profile" => {
+                connect_profile = Some(PathBuf::from(
+                    args.next()
+                        .ok_or("--connect-profile needs a JSON profile path")?,
+                ))
+            }
+            "--password-file" => {
+                password_file = Some(PathBuf::from(
+                    args.next()
+                        .ok_or("--password-file needs a private file path")?,
+                ))
+            }
             "--demo-page" => demo_page = Some(args.next().ok_or("--demo-page needs a view name")?),
             "--screenshot" => {
                 screenshot = Some(PathBuf::from(
@@ -1311,7 +1692,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--help" | "-h" => {
                 println!(
-                    "feishin-rs\n\nNative Rust music client with MPV playback.\n\n  --demo                  Show an explicitly labeled sample library\n  --demo-page VIEW        Select a demo view (requires --demo)\n  --screenshot FILE.png   Capture the native window and exit\n  --version               Show the version\n\nSettings: FEISHIN_RS_CONFIG_DIR overrides the platform config directory.\nPasswords are kept in memory only."
+                    "feishin-rs\n\nNative Rust music client with MPV playback.\n\n  --demo                  Show an explicitly labeled sample library\n  --demo-page VIEW        Select a demo view (requires --demo)\n  --screenshot FILE.png   Capture the native window and exit\n  --connect-profile JSON  Connect a saved server profile for local checks\n  --password-file FILE    Read the profile password from a private file\n  --version               Show the version\n\nSettings: FEISHIN_RS_CONFIG_DIR overrides the platform config directory.\nPasswords stay in memory unless OS credential storage is explicitly selected."
                 );
                 return Ok(());
             }
@@ -1325,6 +1706,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if demo_page.is_some() && !demo {
         return Err("--demo-page requires --demo".into());
     }
+    if demo && connect_profile.is_some() {
+        return Err("--demo and --connect-profile are mutually exclusive".into());
+    }
+    if password_file.is_some() && connect_profile.is_none() {
+        return Err("--password-file requires --connect-profile".into());
+    }
+    let startup = if let Some(path) = connect_profile {
+        let profile: ServerProfile = serde_json::from_slice(&std::fs::read(path)?)?;
+        let password = if let Some(path) = password_file {
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            std::fs::File::open(path)?
+                .take(65537)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() > 65536 {
+                return Err("Password file exceeds the 64 KiB limit".into());
+            }
+            String::from_utf8(bytes)?
+                .trim_end_matches(['\r', '\n'])
+                .to_owned()
+        } else {
+            String::new()
+        };
+        Some((profile, password))
+    } else {
+        None
+    };
     if let Some(page) = &demo_page
         && ![
             "home",
@@ -1346,7 +1754,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Glow,
         viewport: egui::ViewportBuilder::default()
+            .with_app_id("feishin-rs")
             .with_title("Feishin")
+            .with_decorations(false)
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([900.0, 600.0]),
         ..Default::default()
@@ -1356,6 +1766,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         options,
         Box::new(move |cc| {
             let mut app = Application::new(&cc.egui_ctx, demo, screenshot);
+            if let Some((profile, password)) = startup {
+                app.action(&cc.egui_ctx, Action::Connect { profile, password });
+            }
             if let Some(page) = &demo_page {
                 app.view.set_preview(page);
             }
@@ -1413,6 +1826,7 @@ mod tests {
                 Ok(StreamSource {
                     url: "http://127.0.0.1/old-stream".into(),
                     headers: vec![],
+                    transcoded: false,
                 }),
             ))
             .unwrap();
@@ -1522,5 +1936,83 @@ mod tests {
         assert!(app.view.playback.paused);
         assert!(app.desired_paused);
         app.flush_reports();
+    }
+
+    #[test]
+    fn favorite_entity_kinds_do_not_modify_other_items_with_the_same_id() {
+        let (mut app, ctx) = app();
+        app.view.library.albums[0].id = "shared".into();
+        app.view.library.tracks[0].id = "shared".into();
+        app.view.library.tracks[0].favorite = false;
+        app.view.library.artists[0].id = "shared".into();
+        app.view.album_artists = app.view.library.artists.clone();
+        app.tx
+            .send(Message::Favorite(
+                0,
+                ItemKind::Album,
+                "shared".into(),
+                true,
+                Ok(()),
+            ))
+            .unwrap();
+        app.poll(&ctx);
+        assert!(app.view.library.albums[0].favorite);
+        assert!(!app.view.library.tracks[0].favorite);
+        assert!(!app.view.library.artists[0].favorite);
+        app.tx
+            .send(Message::Favorite(
+                0,
+                ItemKind::Artist,
+                "shared".into(),
+                true,
+                Ok(()),
+            ))
+            .unwrap();
+        app.poll(&ctx);
+        assert!(app.view.library.artists[0].favorite);
+        assert!(app.view.album_artists[0].favorite);
+    }
+
+    #[test]
+    fn disconnect_clears_server_specific_state_and_rejects_late_details() {
+        let (mut app, ctx) = app();
+        app.view.track_details = Some(Default::default());
+        app.view.playlist_details = Some(Default::default());
+        app.view.radio_stations.push(Default::default());
+        app.view.smart_playlists.push(Default::default());
+        app.view.directory = Some(Default::default());
+        app.inspected_track = Some("old".into());
+        app.action(&ctx, Action::Disconnect);
+        app.tx
+            .send(Message::feature(
+                0,
+                workflows::FeatureResult::Details("old".into(), Ok(Default::default())),
+            ))
+            .unwrap();
+        app.poll(&ctx);
+        assert!(app.view.track_details.is_none());
+        assert!(app.view.playlist_details.is_none());
+        assert!(app.view.radio_stations.is_empty());
+        assert!(app.view.smart_playlists.is_empty());
+        assert!(app.view.directory.is_none());
+    }
+
+    #[test]
+    fn delayed_pause_observations_cannot_reverse_newer_user_intent() {
+        let (mut app, ctx) = app();
+        app.active_track = app.view.queue.current_track().cloned();
+        app.desired_paused = false;
+        app.view.playback.paused = false;
+        app.action(&ctx, Action::TogglePause);
+        app.player_event(&ctx, Event::Pause(false));
+        assert!(app.desired_paused);
+        assert!(app.view.playback.paused);
+        app.player_event(&ctx, Event::Pause(true));
+        app.action(&ctx, Action::TogglePause);
+        app.player_event(&ctx, Event::Pause(true));
+        assert!(!app.desired_paused);
+        assert!(!app.view.playback.paused);
+        app.player_event(&ctx, Event::Pause(false));
+        assert!(!app.view.playback.paused);
     }
 }

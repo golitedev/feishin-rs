@@ -1,6 +1,6 @@
 # Architecture
 
-Status: first implementation. See parity.md for unimplemented and unvalidated behavior.
+Status: native implementation with advanced server and playback workflows. See parity.md for unimplemented and unvalidated behavior.
 
 ## Product boundary
 
@@ -16,11 +16,12 @@ crates/core/          Domain models, library/queue state, application commands
 crates/servers/       Navidrome, Jellyfin, and OpenSubsonic adapters
 crates/player-mpv/    MPV process lifecycle, IPC commands, and events
 crates/ui-egui/       Views, widgets, themes, and input handling
-crates/platform/      Settings paths and credential-free atomic persistence
+crates/platform/      Settings, OS credentials, diagnostics, notifications
 crates/desktop/       Linux MPRIS service and desktop transport commands
+xtask/                Rust validation, license inventory, Linux packaging
 ```
 
-The core does not depend on egui, eframe, or MPV transport details. Server adapters normalize their responses into shared domain models. The desktop entry point wires components together; the interface issues application commands and presents resulting state. No xtask is needed yet.
+The core does not depend on egui, eframe, or MPV transport details. Server adapters normalize their responses into shared domain models. The desktop entry point wires components together; the interface issues application commands and presents resulting state. `xtask` owns release preparation without introducing another scripting language.
 
 ## Playback through MPV
 
@@ -29,13 +30,17 @@ The core does not depend on egui, eframe, or MPV transport details. Server adapt
 3. MPV events update observed state: position, duration, pause state, buffering, errors, and end of track.
 4. The core reconciles these events with the queue and sends updated state to the interface.
 
-One application-owned MPV process has an isolated, owner-only IPC endpoint. Dropping the handle terminates and reaps only that process. Unix-domain sockets are implemented; Windows named pipes are not. MPV 0.41+ is the tested baseline.
+One application-owned MPV process has an isolated IPC endpoint. Dropping the handle terminates and reaps only that process. Unix-domain sockets and Windows named pipes are implemented. MPV 0.41+ is the tested baseline; Windows has only been cross-checked, not runtime-tested.
 
 Command replies are correlated by request ID and file events by MPV playlist entry ID and the application's load generation. Late EOF events from a previous selection cannot advance the new queue item. Natural EOF, failed loads, explicit stops, and replacement are distinct. Partial messages, timeouts, disconnects, and process exits are handled as errors; uncertain commands are not automatically retried. See [MPV details](mpv.md).
 
 Allow configuration of the MPV executable path and report a useful error if it is missing or unusable. Secure the IPC endpoint for the current user. Avoid shell interpolation when starting MPV. Do not expose stream credentials in command logs or diagnostics.
 
 All audio decoding and output stays inside MPV. There is no browser player, embedded libmpv, or fallback playback engine. MPV's internal codec and audio dependencies are part of the MPV exception.
+
+The app prepares a cloned successor queue and obtains its source in the background. A ticket, session, and load generation reject obsolete preparation results. Queue edits invalidate preparation; the successor snapshot becomes authoritative only on a matching transition. Late file-loaded events for cancelled successors are repaired without replacing newer user selections. Auto DJ rechecks duplicates against the current queue when its result arrives. MPV URL prefetch is disabled to prevent successor requests inheriting current-source authorization. Remote buffering can therefore interrupt a transition; sample-accurate network playback is not guaranteed.
+
+Playback settings are typed, normalized, and applied to the same MPV process. Audio analysis reads MPV's real RMS/peak metadata; it does not synthesize a spectrum. Source transcode identity travels with each load and its asynchronous Start report, so preparing a different source cannot change the active Jellyfin session's playback method.
 
 ## Responsiveness and persistence
 
@@ -45,7 +50,9 @@ Playback reports are serialized on a separate worker to preserve start/progress/
 
 On exit, the app queues the current stop report and waits at most two seconds for the reporting worker to flush. A slow or unavailable server can still miss its final report; shutdown does not wait indefinitely for network I/O.
 
-Settings schema version 1 stores only server profile, MPV executable path, volume, queue, repeat, and shuffle. Passwords and tokens are memory-only; authentication is required on each launch. tempfile stages owner-only files before atomic replacement. Unknown/corrupt settings are preserved, and writes are disabled for that session. Queue restoration does not automatically resume audio or restore the exact position.
+Settings schema 2 stores server profiles, MPV path, queue and position, normalized preferences, saved filters, shortcuts, and hashed identities of explicitly remembered accounts. It migrates schema 1. Passwords and tokens never enter settings JSON. Optional OS credentials use a serial worker: a revision cancels obsolete saves/loads, and Forget is ordered after any in-flight save. Profile URLs cannot contain embedded credentials, query strings, or fragments. `tempfile` stages owner-only files before atomic replacement. Unknown/corrupt settings are preserved and writes are disabled for that session. Restoring a queue does not start audio; matching file-loaded events restore the saved position after user playback.
+
+Diagnostics accept an enum of event names, without arbitrary error strings or metadata. A bounded worker rotates local JSONL files. Notifications run off the UI thread and honor private mode. OS integrations failing remain recoverable and do not introduce alternate playback paths.
 
 ## Verification boundaries
 

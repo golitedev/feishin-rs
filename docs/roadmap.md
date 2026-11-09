@@ -1,52 +1,47 @@
 # Roadmap
 
-Status: first native implementation. Synthetic server-to-MPV listening and native rendering work; full UI and feature parity remain open. See [parity](parity.md) for evidence and gaps.
+Status: 2026-11-09. See [parity](parity.md) for the feature matrix and remaining acceptance work.
 
-## 0. Repository foundation
+## Foundation and native application
 
-- [x] Initialize Git on main.
-- [x] Add the MIT license for original contributions.
-- [x] Document Rust-only application code and MPV-only playback.
-- [x] Add architecture, contributor, provenance, and agent instructions.
+- [x] Git on main, MIT original contributions, provenance and agent instructions.
+- [x] Rust workspace with egui/eframe, typed domain models and worker boundaries.
+- [x] Versioned atomic settings, schema migration, optional OS credentials.
+- [x] Bounded structured diagnostics without free-form metadata or secrets.
+- [x] Formatting, strict linting, focused unit/protocol/integration tests.
 
-## 1. Runnable foundation
+## Server-backed listening
 
-- [x] Create a Cargo workspace and select supported Rust/crate versions.
-- [x] Open a native egui/eframe window with basic navigation.
-- [x] Add typed, credential-free errors, settings paths, and atomic persistence.
-- [ ] Add structured diagnostic logging with explicit redaction tests.
-- [x] Establish formatting, linting, and focused test commands.
+- [x] Navidrome/OpenSubsonic and Jellyfin authentication and normalized libraries.
+- [x] Album/artist/track/folder browsing, artwork, search, favorites and ratings.
+- [x] Playlist occurrence editing/reordering and metadata; Navidrome smart rules.
+- [x] Timed lyrics, downloads, internet radio, stream transcoding controls.
+- [x] Disposable real-Navidrome advanced-workflow validation.
+- [ ] Live Jellyfin validation and large-library performance measurements.
 
-## 2. MPV playback
+## MPV playback
 
-- [x] Configure MPV executable and manage an application-owned process.
-- [x] Implement JSON IPC requests, replies, and property subscriptions.
-- [x] Support load, play/pause, seek, volume, and stop.
-- [x] Implement queue transitions and tagged end-of-track handling.
-- [x] Handle unavailable MPV, failed loads, timeouts, disconnects, and shutdown.
+- [x] Isolated external process, Unix socket and Windows named-pipe transport.
+- [x] Playback controls, tagged queue transitions, shutdown and recoverable errors.
+- [x] Prepared successor playback, cancellation recovery, Auto DJ.
+- [x] Audio device/output controls, ReplayGain, EQ, normalization, speed and stats.
+- [x] Real stereo RMS/peak analysis through MPV.
+- [ ] Crossfade and a complete visualizer implementation.
+- [ ] Real sound-device session and Windows/macOS runtime validation.
 
-## 3. Server-backed listening
+## Interface and desktop
 
-- [x] Implement server adapters using public API documentation.
-- [x] Add authentication, normalized library models, browsing, search, and artwork.
-- [x] Play authenticated synthetic server streams through real MPV.
-- [x] Implement Navidrome/OpenSubsonic and Jellyfin adapters with protocol tests.
-- [ ] Validate against a real user-operated server and audio device.
+- [x] Current-reference Home/sidebar/settings geometry and Inter typography.
+- [x] Native library/detail/queue/fullscreen views and timed lyric controls.
+- [x] Multiple profiles, saved filters, themes/custom colors, configurable shortcuts.
+- [x] Linux MPRIS and optional desktop notifications.
+- [ ] Complete visual/interaction parity, localization and accessibility audit.
+- [ ] Remaining desktop integrations, external lyric providers and offline library.
 
-## 4. Daily-use features
+## Distribution
 
-- [x] Basic playlist create/delete/add/remove, favorites, sorting/filtering, and queue editing.
-- [x] Plaintext lyrics and listening/scrobble behavior with protocol tests.
-- [x] Queue/preferences restoration, basic keyboard shortcuts, and Linux MPRIS controls.
-- [x] Document feature differences and server capability limitations.
-- [ ] Complete visual/interaction parity and advanced features listed in parity.md.
+- [x] Rust xtask for checks, pinned dependency notices and verified Linux archive.
+- [x] Original desktop icon, desktop entry, font licenses and installation docs.
+- [ ] Target-system validation, platform installers, signing and update delivery.
 
-## 5. Distribution
-
-- [ ] Package and validate the Linux desktop application first.
-- [ ] Validate Windows and macOS support and their MPV IPC transports.
-- [x] Document MPV requirements and font/dependency provenance.
-- [ ] Generate and bundle complete third-party notices for release binaries.
-- [ ] Add release automation and installation documentation.
-
-Mark work complete only after it exists and has appropriate verification. Feature parity with Feishin is a long-term direction, not a current claim.
+Check an item only when behavior exists and appropriate verification has run. No overall feature-parity or identical-UI claim is made by this checklist.

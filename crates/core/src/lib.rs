@@ -1,5 +1,10 @@
 //! Shared music models and queue policy, independent of transports and UI.
+pub mod playback;
+pub mod preferences;
+
 use serde::{Deserialize, Serialize};
+
+pub mod features;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServerKind {
@@ -66,6 +71,8 @@ pub struct Artist {
     pub name: String,
     pub cover_id: String,
     pub album_count: u32,
+    #[serde(default)]
+    pub favorite: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -204,6 +211,37 @@ impl Queue {
         self.forced_next.clear();
     }
 
+    /// Moves one occurrence; current/history/forced-next identity follows that
+    /// occurrence even when a queue contains the same song more than once.
+    pub fn move_track(&mut self, from: usize, to: usize) -> bool {
+        if from >= self.tracks.len() || to >= self.tracks.len() || from == to {
+            return false;
+        }
+        let remap = |index: usize| {
+            if index == from {
+                to
+            } else if from < to && index > from && index <= to {
+                index - 1
+            } else if to < from && index >= to && index < from {
+                index + 1
+            } else {
+                index
+            }
+        };
+        let track = self.tracks.remove(from);
+        self.tracks.insert(to, track);
+        self.current = self.current.map(remap);
+        for index in self
+            .history
+            .iter_mut()
+            .chain(&mut self.remaining)
+            .chain(&mut self.forced_next)
+        {
+            *index = remap(*index);
+        }
+        true
+    }
+
     pub fn set_shuffle(&mut self, shuffle: bool) {
         self.shuffle = shuffle;
         self.reset_remaining();
@@ -325,6 +363,20 @@ mod tests {
         assert_eq!(q.advance(false).map(|t| t.id.as_str()), Some("next-a"));
         assert_eq!(q.advance(false).map(|t| t.id.as_str()), Some("next-b"));
         assert!(q.advance(false).is_some_and(|t| t.id == "1" || t.id == "2"));
+    }
+    #[test]
+    fn reordering_duplicate_occurrences_preserves_current_and_forced_next() {
+        let mut q = Queue::default();
+        q.replace(tracks(), 1);
+        q.insert_next(vec![Track {
+            id: "0".into(),
+            ..Default::default()
+        }]);
+        assert!(q.move_track(1, 3));
+        assert_eq!(q.current, Some(3));
+        assert_eq!(q.current_track().unwrap().id, "1");
+        assert_eq!(q.advance(false).unwrap().id, "0");
+        assert!(!q.move_track(usize::MAX, 0));
     }
     #[test]
     fn natural_eof_and_manual_next_have_distinct_repeat_policy() {

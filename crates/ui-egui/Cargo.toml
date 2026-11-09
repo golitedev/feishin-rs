@@ -11,3 +11,4 @@ workspace = true
 [dependencies]
 feishin-core.workspace = true
 egui.workspace = true
+serde_json.workspace = true

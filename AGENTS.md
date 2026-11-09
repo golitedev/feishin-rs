@@ -2,7 +2,7 @@
 
 ## Scope and current state
 
-Read README.md, docs/architecture.md, docs/roadmap.md, and docs/parity.md before working here. A first native application is implemented; full Feishin parity is not achieved. Keep status claims tied to working behavior and tests. Follow the user's requested scope.
+Read README.md, docs/architecture.md, docs/roadmap.md, and docs/parity.md before working here. The native application includes advanced server, library and MPV workflows; full Feishin parity is not achieved. Keep status claims tied to working behavior and tests. Follow the user's requested scope.
 
 ## Language and playback
 

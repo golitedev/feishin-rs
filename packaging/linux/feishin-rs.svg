@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="feishin-rs music player">
+<rect width="128" height="128" rx="28" fill="#101114"/>
+<circle cx="64" cy="64" r="44" fill="none" stroke="#3279ff" stroke-width="4" opacity="0.25"/>
+<circle cx="64" cy="64" r="34" fill="none" stroke="#3279ff" stroke-width="4" opacity="0.45"/>
+<circle cx="64" cy="64" r="24" fill="none" stroke="#3279ff" stroke-width="4" opacity="0.8"/>
+<path d="M57 47v34l28-17z" fill="#ffffff"/>
+</svg>

@@ -23,7 +23,8 @@ shutdown without blocking on a bus handshake.
 State with no current track advertises Stopped. A track with `paused = true`
 advertises Paused, and an unpaused track advertises Playing. The caller should
 clear the desktop track on actual stop or end of queue even if it retains the
-last track in the application UI. MPRIS volume uses 0.0 through 1.0; the Rust
+last track in the application UI. MPRIS volume uses 1.0 for 100% and accepts
+values up to 2.0, bounded by the application's configured maximum; the Rust
 boundary uses percentages. Seek commands are absolute seconds at the boundary,
 and D-Bus positions/offsets are microseconds. SetPosition ignores stale track
 identities. Metadata never contains authenticated stream URLs.

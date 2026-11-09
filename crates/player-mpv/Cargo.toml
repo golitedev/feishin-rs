@@ -9,6 +9,11 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+feishin-core.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+tokio = { version = "1", features = ["rt", "net", "time", "io-util"] }
+getrandom = "0.4"

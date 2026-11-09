@@ -13,3 +13,9 @@ indent_size = 2
 
 [crates/ui-egui/assets/fonts/OFL.txt]
 trim_trailing_whitespace = false
+
+[crates/ui-egui/assets/fonts/inter/OFL.txt]
+trim_trailing_whitespace = false
+
+[packaging/licenses/**]
+trim_trailing_whitespace = false

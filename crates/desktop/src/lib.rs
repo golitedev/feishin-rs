@@ -365,7 +365,7 @@ mod linux {
             if !value.is_finite() {
                 return Err(fdo::Error::InvalidArgs("Volume must be finite.".into()));
             }
-            let volume = (value * 100.0).clamp(0.0, 100.0);
+            let volume = (value * 100.0).clamp(0.0, 200.0);
             self.0.send(DesktopCommand::Volume(volume))?;
             self.0.change(|state| state.volume = volume)
         }
@@ -436,7 +436,7 @@ mod linux {
     }
     fn safe_volume(volume: f64) -> f64 {
         if volume.is_finite() {
-            volume.clamp(0.0, 100.0)
+            volume.clamp(0.0, 200.0)
         } else {
             0.0
         }
@@ -587,7 +587,7 @@ mod linux {
             assert_eq!(microseconds(-1.0), 0);
             assert_eq!(microseconds(1.5), 1_500_000);
             assert_eq!(safe_volume(f64::INFINITY), 0.0);
-            assert_eq!(safe_volume(120.0), 100.0);
+            assert_eq!(safe_volume(120.0), 120.0);
         }
         #[test]
         fn track_paths_are_valid_and_do_not_expose_server_ids() {

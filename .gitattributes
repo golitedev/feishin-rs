@@ -1,2 +1,4 @@
 # Preserve the byte-identical upstream font license and its recorded SHA-256.
 crates/ui-egui/assets/fonts/OFL.txt whitespace=-blank-at-eol
+crates/ui-egui/assets/fonts/inter/OFL.txt whitespace=-blank-at-eol
+packaging/licenses/** whitespace=-blank-at-eol

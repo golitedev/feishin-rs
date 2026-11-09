@@ -1,0 +1,20 @@
+{
+  "package": "egui-wgpu",
+  "version": "0.37.0",
+  "repository": "https://github.com/emilk/egui",
+  "revision": "7c0b40402271e8d40cda69f87cf3c2617c2e4382",
+  "license_revision": "841a328ba2dd8f6996beb7189ebb7fc00e668a2a",
+  "license_reference": "https://api.github.com/repos/emilk/egui/git/ref/tags/0.37.0",
+  "files": [
+    {
+      "path": "LICENSE-APACHE",
+      "url": "https://raw.githubusercontent.com/emilk/egui/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-APACHE",
+      "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "url": "https://raw.githubusercontent.com/emilk/egui/841a328ba2dd8f6996beb7189ebb7fc00e668a2a/LICENSE-MIT",
+      "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c"
+    }
+  ]
+}

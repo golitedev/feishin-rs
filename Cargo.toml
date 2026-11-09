@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["apps/feishin-rs", "crates/*"]
+members = ["apps/feishin-rs", "crates/*", "xtask"]
 default-members = ["apps/feishin-rs"]
 
 [workspace.package]

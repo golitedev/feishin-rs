@@ -24,6 +24,14 @@ pub enum Icon {
     Volume,
     Lyrics,
     Close,
+    Forward,
+    Folder,
+    Search,
+    Flag,
+    Sliders,
+    Sidebar,
+    Star,
+    More,
 }
 
 pub fn icon_button(ui: &mut Ui, icon: Icon, label: &str, active: bool, primary: bool) -> Response {
@@ -39,9 +47,9 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, label: &str, active: bool, primary: 
     let color = if primary {
         Color32::BLACK
     } else if active {
-        super::BLUE
+        ui.visuals().selection.bg_fill
     } else {
-        super::TEXT
+        ui.visuals().text_color()
     };
     draw(
         ui.painter(),
@@ -73,6 +81,52 @@ pub fn draw(p: &Painter, icon: Icon, rect: Rect, color: Color32) {
         ));
     };
     match icon {
+        Icon::More => {
+            for x in [0.2, 0.5, 0.8] {
+                p.circle_filled(point(x, 0.5), rect.width() * 0.055, color);
+            }
+        }
+        Icon::Star => {
+            let points = (0..=10)
+                .map(|index| {
+                    let angle =
+                        index as f32 * std::f32::consts::PI / 5.0 - std::f32::consts::FRAC_PI_2;
+                    let radius = if index % 2 == 0 { 0.48 } else { 0.22 };
+                    point(0.5 + angle.cos() * radius, 0.5 + angle.sin() * radius)
+                })
+                .collect();
+            p.add(egui::Shape::line(points, stroke));
+        }
+        Icon::Search => {
+            p.circle_stroke(point(0.4, 0.4), rect.width() * 0.28, stroke);
+            line((0.61, 0.61), (0.94, 0.94));
+        }
+        Icon::Flag => {
+            path(&[
+                (0.12, 0.95),
+                (0.12, 0.1),
+                (0.9, 0.1),
+                (0.73, 0.4),
+                (0.9, 0.68),
+                (0.12, 0.68),
+            ]);
+        }
+        Icon::Sliders => {
+            for (x, y) in [(0.18, 0.3), (0.5, 0.7), (0.82, 0.4)] {
+                line((x, 0.05), (x, 0.95));
+                line((x - 0.12, y), (x + 0.12, y));
+            }
+        }
+        Icon::Sidebar => {
+            p.rect_stroke(
+                Rect::from_min_max(point(0.1, 0.1), point(0.9, 0.9)),
+                1.0,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+            line((0.4, 0.1), (0.4, 0.9));
+            path(&[(0.72, 0.35), (0.56, 0.5), (0.72, 0.65)]);
+        }
         Icon::Play => {
             p.add(egui::Shape::convex_polygon(
                 vec![point(0.2, 0.05), point(0.95, 0.5), point(0.2, 0.95)],
@@ -113,6 +167,20 @@ pub fn draw(p: &Painter, icon: Icon, rect: Rect, color: Color32) {
             for y in [0.25, 0.5, 0.75] {
                 line((0.1, y), (0.9, y));
             }
+        }
+        Icon::Forward => {
+            path(&[(0.35, 0.12), (0.7, 0.5), (0.35, 0.88)]);
+        }
+        Icon::Folder => {
+            path(&[
+                (0.05, 0.2),
+                (0.4, 0.2),
+                (0.5, 0.32),
+                (0.95, 0.32),
+                (0.95, 0.85),
+                (0.05, 0.85),
+                (0.05, 0.2),
+            ]);
         }
         Icon::Back => {
             path(&[(0.65, 0.12), (0.3, 0.5), (0.65, 0.88)]);
@@ -242,4 +310,24 @@ pub fn draw(p: &Painter, icon: Icon, rect: Rect, color: Color32) {
             p.circle_stroke(point(0.75, 0.25), rect.width() * 0.19, stroke);
         }
     }
+}
+
+pub fn toolbar_button(ui: &mut Ui, icon: Icon, label: &str) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(46.0, 36.0), Sense::click());
+    ui.painter().rect_filled(
+        rect,
+        2.0,
+        if response.hovered() {
+            ui.visuals().widgets.hovered.weak_bg_fill
+        } else {
+            ui.visuals().extreme_bg_color
+        },
+    );
+    draw(
+        ui.painter(),
+        icon,
+        Rect::from_center_size(rect.center(), vec2(14.0, 14.0)),
+        ui.visuals().text_color(),
+    );
+    response.on_hover_text(label)
 }

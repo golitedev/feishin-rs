@@ -1,4 +1,8 @@
 //! Versioned, credential-free application preferences and atomic persistence.
+pub mod credentials;
+pub mod diagnostics;
+pub mod notifications;
+use feishin_core::preferences::Preferences;
 use feishin_core::{Queue, ServerProfile};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -19,6 +23,8 @@ pub enum Error {
     NoDirectory,
     #[error("Settings file exceeds the 8 MiB limit")]
     TooLarge,
+    #[error("Settings contain an invalid server profile; embedded URL credentials are not allowed")]
+    InvalidProfile,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -29,16 +35,24 @@ pub struct Settings {
     pub mpv_path: String,
     pub volume: f64,
     pub queue: Queue,
+    pub servers: Vec<ServerProfile>,
+    pub preferences: Preferences,
+    pub playback_position: f64,
+    pub remembered_servers: Vec<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             server: None,
             mpv_path: "mpv".into(),
             volume: 75.0,
             queue: Queue::default(),
+            servers: Vec::new(),
+            preferences: Preferences::default(),
+            playback_position: 0.0,
+            remembered_servers: Vec::new(),
         }
     }
 }
@@ -84,11 +98,37 @@ pub fn load(dir: &Path) -> Result<Settings, Error> {
         return Err(Error::TooLarge);
     }
     let mut settings: Settings = serde_json::from_slice(&bytes)?;
-    if settings.version != 1 {
+    if settings.version != 1 && settings.version != 2 {
         return Err(Error::Version(settings.version));
     }
+    settings.version = 2;
+    if settings.servers.is_empty()
+        && let Some(profile) = &settings.server
+    {
+        settings.servers.push(profile.clone());
+    }
+    settings.servers.truncate(100);
+    settings.preferences.normalize();
+    settings.servers = settings
+        .servers
+        .into_iter()
+        .map(credentials::validate_profile)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| Error::InvalidProfile)?;
+    settings.server = settings
+        .server
+        .map(credentials::validate_profile)
+        .transpose()
+        .map_err(|_| Error::InvalidProfile)?;
+    settings.playback_position = if settings.playback_position.is_finite() {
+        settings.playback_position.clamp(0.0, 31_536_000.0)
+    } else {
+        0.0
+    };
     settings.volume = if settings.volume.is_finite() {
-        settings.volume.clamp(0.0, 100.0)
+        settings
+            .volume
+            .clamp(0.0, settings.preferences.playback.volume_max)
     } else {
         75.0
     };
@@ -97,6 +137,9 @@ pub fn load(dir: &Path) -> Result<Settings, Error> {
 }
 
 pub fn save(dir: &Path, settings: &Settings) -> Result<(), Error> {
+    for profile in settings.servers.iter().chain(settings.server.iter()) {
+        credentials::validate_profile(profile.clone()).map_err(|_| Error::InvalidProfile)?;
+    }
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -127,6 +170,7 @@ mod tests {
             server: Some(ServerProfile {
                 name: "Test".into(),
                 url: "https://music.example".into(),
+                username: "alice".into(),
                 ..Default::default()
             }),
             ..Default::default()
@@ -159,5 +203,41 @@ mod tests {
         fs::write(&path, br#"{"version":99}"#).unwrap();
         assert!(matches!(load(dir.path()), Err(Error::Version(99))));
         assert_eq!(load(&dir.path().join("missing")).unwrap().volume, 75.0);
+    }
+    #[test]
+    fn profile_url_credentials_are_rejected_before_any_settings_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut settings = Settings::default();
+        settings.servers.push(ServerProfile {
+            url: "https://user:secret@music.example".into(),
+            username: "user".into(),
+            ..Default::default()
+        });
+        assert!(matches!(
+            save(dir.path(), &settings),
+            Err(Error::InvalidProfile)
+        ));
+        assert!(!dir.path().join("settings.json").exists());
+    }
+
+    #[test]
+    fn schema_one_migrates_profiles_and_new_preferences_without_starting_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("settings.json"), br#"{
+            "version":1,
+            "server":{"name":"Old server","url":"https://music.example/base/","username":"alice","kind":"Navidrome"},
+            "volume":150,
+            "queue":{"tracks":[{"id":"saved","title":"Saved track","artist":"Artist","album":"Album","album_id":"album","artist_id":"artist","duration":180,"number":1,"disc":1,"year":2026,"genre":"Jazz","cover_id":"cover","favorite":true}],"current":0,"repeat":"All","shuffle":false}
+        }"#).unwrap();
+        let settings = load(dir.path()).unwrap();
+        assert_eq!(settings.version, 2);
+        assert_eq!(settings.servers.len(), 1);
+        assert_eq!(settings.servers[0].url, "https://music.example/base");
+        assert_eq!(settings.queue.current_track().unwrap().id, "saved");
+        assert_eq!(settings.volume, 100.0);
+        assert!(settings.preferences.resume_position);
+        assert!(settings.remembered_servers.is_empty());
+        save(dir.path(), &settings).unwrap();
+        assert_eq!(load(dir.path()).unwrap().version, 2);
     }
 }

@@ -1,0 +1,18 @@
+{
+  "package": "accesskit",
+  "version": "0.25.2",
+  "repository": "https://github.com/AccessKit/accesskit",
+  "revision": "f3026222559c7f5f46d8f25cb7404de68eb149f0",
+  "files": [
+    {
+      "path": "LICENSE-APACHE",
+      "url": "https://raw.githubusercontent.com/AccessKit/accesskit/f3026222559c7f5f46d8f25cb7404de68eb149f0/LICENSE-APACHE",
+      "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "url": "https://raw.githubusercontent.com/AccessKit/accesskit/f3026222559c7f5f46d8f25cb7404de68eb149f0/LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    }
+  ]
+}
