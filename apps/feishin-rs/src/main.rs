@@ -1737,6 +1737,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         && ![
             "home",
             "albums",
+            "favorites",
+            "genres",
+            "radio",
+            "folders",
+            "album-artists",
             "album",
             "artists",
             "artist",

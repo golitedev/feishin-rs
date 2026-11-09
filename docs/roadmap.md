@@ -33,6 +33,7 @@ Status: 2026-11-09. See [parity](parity.md) for the feature matrix and remaining
 
 - [x] Current-reference Home/sidebar/settings geometry and Inter typography.
 - [x] Native library/detail/queue/fullscreen views and timed lyric controls.
+- [x] Compared detail headers, artist track/discography navigation, related albums, library filter column, artwork track rows, and genre counts.
 - [x] Multiple profiles, saved filters, themes/custom colors, configurable shortcuts.
 - [x] Linux MPRIS and optional desktop notifications.
 - [ ] Complete visual/interaction parity, localization and accessibility audit.

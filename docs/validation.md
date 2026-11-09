@@ -6,7 +6,7 @@ Date: 2026-11-09. Environment: remote Ubuntu x86_64, Rust/Cargo 1.98.1. The work
 
 - Locked debug and optimized release application builds: passed.
 - Workspace formatting and strict Clippy with warnings denied: passed.
-- Workspace default tests: 102 passing across domain/settings migration, credential cancellation, application state, HTTP protocols, MPV lifecycle, desktop metadata, UI behavior/layout, and packaging.
+- Workspace default tests: 109 passing across domain/settings migration, credential cancellation, application state, HTTP protocols, MPV lifecycle, desktop metadata, UI behavior/layout, and packaging.
 - Nine explicit real-MPV tests: passed with MPV 0.41.0, null audio, generated WAV data, and loopback HTTP. Cover playback/settings/devices/stats, pitch and gapless modes, actual stereo levels/silence, prepared transitions/cancellation, authentication-header isolation, and pause fades without changing volume. A new regression exposed successor prefetch forwarding current authorization; disabling URL prefetch fixes the test.
 - One explicit server-to-MPV listening test: passed. Covers authenticated streams, two natural completions, scrobbles, and rejecting a stale Stop event.
 - One isolated-session MPRIS integration test: passed.
@@ -23,6 +23,8 @@ Captured actual eframe windows under Xvfb at 1440 × 900 using Mesa software ren
 Current Home geometry matches observed key positions: hero y=78–326, genre tiles starting y=418, Explore heading y=568, album artwork y=606–792, and the fixed 90 px player bar starting y=810. Added Inter typography, hero gradient/shadow, album hover playback/queue/favorite/rating controls, sidebar geometry, and an opaque 960 × 810 settings modal. Native input verified the Playback settings tab, extra arguments controls, album hover and context menus.
 
 UI regressions cover settings modal click isolation, fixed player-bar sizing, album hover commands without accidental navigation, configured shortcuts/exact modifiers, Favorites categories, sidebar resize/collapse persistence, vertical fullscreen queue layout, route identity, bounded artwork requests, and seek-release behavior. App regressions cover stale sessions/search/sources, late playlist results, cancelled prepared audio, Auto DJ edits, entity-specific favorites, delayed pause intent, and forgetting a queued credential save.
+
+Detail/library follow-up: compared live Feishin album, artist, Albums, Tracks, Favorites and Genres views against native windows using the same disposable library. Updated detail cover/title/control geometry, background painting, library headers/filter column, original artist placeholders, track artwork/subtitles/metadata, Favorites selection, and genre counts. Captured labeled native demo windows for album, artist, playlist, albums, tracks, favorites, and genres, and verified live album/library layouts at 900 × 600. Added regressions for artist/genre link commands, the artist track tab, removing the correct duplicate playlist occurrence after filtering, filtered album playback order, genre-search playback, navigation filter restoration, and backward-compatible saved-filter serialization. Formatting, workspace strict Clippy/default tests, a locked debug build, and xtask checks were rerun; environment-dependent playback/server/OS checks listed above were not rerun for this UI follow-up.
 
 Screenshots and logs are ignored local development artifacts. They do not prove every screen/state is pixel-identical.
 

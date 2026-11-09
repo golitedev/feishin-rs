@@ -32,6 +32,7 @@ pub enum Icon {
     Sidebar,
     Star,
     More,
+    Clock,
 }
 
 pub fn icon_button(ui: &mut Ui, icon: Icon, label: &str, active: bool, primary: bool) -> Response {
@@ -81,6 +82,10 @@ pub fn draw(p: &Painter, icon: Icon, rect: Rect, color: Color32) {
         ));
     };
     match icon {
+        Icon::Clock => {
+            p.circle_stroke(rect.center(), rect.width() * 0.43, stroke);
+            path(&[(0.5, 0.2), (0.5, 0.5), (0.72, 0.5)]);
+        }
         Icon::More => {
             for x in [0.2, 0.5, 0.8] {
                 p.circle_filled(point(x, 0.5), rect.width() * 0.055, color);

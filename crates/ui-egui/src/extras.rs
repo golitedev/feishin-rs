@@ -971,26 +971,13 @@ impl View {
         ui.label("Native Rust interface · MPV playback · MIT original application code");
     }
     pub(super) fn favorites_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        heading(ui, "Favorites", 28.0);
-        ui.add_space(18.0);
-        ui.horizontal(|ui| {
-            for (category, label) in [
-                (FavoriteCategory::Tracks, "Tracks"),
-                (FavoriteCategory::Albums, "Albums"),
-                (FavoriteCategory::Artists, "Artists"),
-            ] {
-                ui.selectable_value(&mut self.favorite_category, category, label);
-            }
-        });
-        ui.add_space(18.0);
+        self.toolbar(ui, "Favorites", 0, actions);
         match self.favorite_category {
             FavoriteCategory::Albums => {
                 let albums = self
-                    .library
-                    .albums
-                    .iter()
+                    .filtered_albums()
+                    .into_iter()
                     .filter(|a| a.favorite)
-                    .cloned()
                     .collect::<Vec<_>>();
                 if albums.is_empty() {
                     empty(
@@ -1003,19 +990,16 @@ impl View {
             }
             FavoriteCategory::Artists => {
                 let artists = self
-                    .library
-                    .artists
-                    .iter()
+                    .filtered_artists(&self.library.artists)
+                    .into_iter()
                     .filter(|a| a.favorite)
-                    .cloned()
                     .collect::<Vec<_>>();
                 self.artist_grid(ui, &artists, actions);
             }
             FavoriteCategory::Tracks => {
                 let tracks = self
-                    .library
-                    .tracks
-                    .iter()
+                    .filtered_tracks(&self.library.tracks)
+                    .into_iter()
                     .filter(|t| t.favorite)
                     .collect::<Vec<_>>();
                 self.track_table(ui, &tracks, actions, true);
@@ -1023,15 +1007,88 @@ impl View {
         }
     }
     pub(super) fn genres_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        heading(ui, "Genres", 28.0);
-        ui.add_space(18.0);
-        for genre in self.library.genres.clone() {
-            if ui.button(&genre).clicked() {
+        self.toolbar(ui, "Genres", self.library.genres.len(), actions);
+        let query = self.filter.to_lowercase();
+        let mut genres = self
+            .library
+            .genres
+            .iter()
+            .filter(|g| g.to_lowercase().contains(&query))
+            .cloned()
+            .collect::<Vec<_>>();
+        genres.sort_by_key(|g| g.to_lowercase());
+        if self.descending {
+            genres.reverse();
+        }
+        let width = ui.available_width();
+        let tracks_x = width - 130.0;
+        let albums_x = width - 30.0;
+        let (header, _) = ui.allocate_exact_size(vec2(width, 31.0), Sense::hover());
+        for (x, label) in [
+            (12.0, "#"),
+            (56.0, "TITLE"),
+            (tracks_x, "TRACKS"),
+            (albums_x, "ALBUMS"),
+        ] {
+            ui.painter().text(
+                header.min + vec2(x, 15.0),
+                if x >= tracks_x {
+                    egui::Align2::CENTER_CENTER
+                } else {
+                    egui::Align2::LEFT_CENTER
+                },
+                label,
+                egui::FontId::proportional(12.0),
+                self.colors.muted,
+            );
+        }
+        ui.painter().line_segment(
+            [header.left_bottom(), header.right_bottom()],
+            Stroke::new(1.0, self.colors.line),
+        );
+        for (index, genre) in genres.into_iter().enumerate() {
+            let (rect, response) = ui.allocate_exact_size(
+                vec2(width, 40.0 - ui.spacing().item_spacing.y),
+                Sense::click(),
+            );
+            if response.hovered() {
+                ui.painter().rect_filled(rect, 3, self.colors.surface);
+            }
+            let tracks = self
+                .library
+                .tracks
+                .iter()
+                .filter(|t| t.genre.eq_ignore_ascii_case(&genre))
+                .count();
+            let albums = self
+                .library
+                .albums
+                .iter()
+                .filter(|a| a.genre.eq_ignore_ascii_case(&genre))
+                .count();
+            for (x, label) in [
+                (12.0, (index + 1).to_string()),
+                (56.0, genre.clone()),
+                (tracks_x, tracks.to_string()),
+                (albums_x, albums.to_string()),
+            ] {
+                ui.painter().text(
+                    pos2(rect.left() + x, rect.center().y),
+                    if x >= tracks_x {
+                        egui::Align2::CENTER_CENTER
+                    } else {
+                        egui::Align2::LEFT_CENTER
+                    },
+                    label,
+                    egui::FontId::proportional(14.0),
+                    self.colors.text,
+                );
+            }
+            if response.clicked() {
                 self.navigate(Page::Albums);
                 self.genre = Some(genre);
             }
         }
-        let _ = actions;
     }
     pub(super) fn radio_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         heading(ui, "Radio Stations", 28.0);
@@ -1307,6 +1364,9 @@ impl View {
                                 self.genre =
                                     (!filter.genre.is_empty()).then_some(filter.genre.clone());
                                 self.favorites_only = filter.favorites_only;
+                                self.exclude_favorites = filter.exclude_favorites;
+                                self.artist_filter =
+                                    (!filter.artist.is_empty()).then_some(filter.artist.clone());
                                 self.min_rating = filter.min_rating;
                                 self.sort = match filter.sort.as_str() {
                                     "artist" => Sort::Artist,
@@ -1346,6 +1406,8 @@ impl View {
                     query: self.filter.clone(),
                     genre: self.genre.clone().unwrap_or_default(),
                     favorites_only: self.favorites_only,
+                    exclude_favorites: self.exclude_favorites,
+                    artist: self.artist_filter.clone().unwrap_or_default(),
                     min_rating: self.min_rating,
                     sort: match self.sort {
                         Sort::Artist => "artist",
@@ -1702,7 +1764,9 @@ impl View {
     }
     pub(super) fn album_artists_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         self.toolbar(ui, "Album Artists", self.album_artists.len(), actions);
-        let artists = self.filtered_artists(&self.album_artists);
-        self.artist_grid(ui, &artists, actions);
+        self.library_body(ui, actions, |view, ui, actions| {
+            let artists = view.filtered_artists(&view.album_artists);
+            view.artist_grid(ui, &artists, actions);
+        });
     }
 }

@@ -8,6 +8,8 @@ The Rust port supports server-backed listening, library management, advanced MPV
 
 Implemented workflows include album/artist/track/folder browsing, favorites, ratings, editable and smart playlists, internet radio, original-file downloads, synchronized lyrics, saved filters, multiple servers, themes, configurable shortcuts, notifications, and Linux MPRIS. Playback uses MPV for output devices, ReplayGain, equalization, speed/pitch, pause/resume fades, audio statistics, live level meters, and prepared queue transitions. Availability depends on the server protocol and account permissions. Tests include a real disposable Navidrome server and real MPV with synthetic media.
 
+Library views provide a collapsible filter column for favorites, artist, genre, and minimum rating, plus search, sorting, and playback of the filtered collection. Album pages link to their artist and genre and show other albums by the artist. Artist pages switch between discography and tracks. Genre rows show track and album counts. Saved filters include artist and excluded-favorite selections.
+
 Application code and interface are Rust. MPV is the explicit external playback exception. There is no Electron, webview, JavaScript/TypeScript frontend, browser audio, embedded libmpv, or second player. Low-level dependencies still use operating-system APIs and native cryptography; this is not a claim that every transitive dependency is implemented exclusively in Rust.
 
 ## Build and run
@@ -37,7 +39,7 @@ xvfb-run -a -s '-screen 0 1440x900x24' env LIBGL_ALWAYS_SOFTWARE=1 \
   target/debug/feishin-rs --demo --demo-page album --screenshot local/album.png
 ```
 
-Demo mode is labeled and contains original sample metadata and Rust-drawn placeholder artwork. It makes no server requests or playback attempts and does not save the sample library. Available demo pages: `home`, `albums`, `album`, `artists`, `artist`, `tracks`, `playlist`, `settings`, `queue`, `now-playing`, and `lyrics`.
+Demo mode is labeled and contains original sample metadata and Rust-drawn placeholder artwork. It makes no server requests or playback attempts and does not save the sample library. Available demo pages: `home`, `albums`, `album`, `artists`, `artist`, `album-artists`, `tracks`, `favorites`, `genres`, `radio`, `folders`, `playlist`, `settings`, `queue`, `now-playing`, and `lyrics`.
 
 ## Verification
 

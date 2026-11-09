@@ -42,7 +42,7 @@ impl Default for Appearance {
             font_size: 14.0,
             show_feature: true,
             show_genres: true,
-            album_background: false,
+            album_background: true,
             artist_background: true,
             language: "en".into(),
             custom_colors: BTreeMap::new(),
@@ -76,6 +76,8 @@ pub struct SavedFilter {
     pub query: String,
     pub genre: String,
     pub favorites_only: bool,
+    pub exclude_favorites: bool,
+    pub artist: String,
     pub min_rating: u8,
     pub sort: String,
     pub descending: bool,
@@ -182,6 +184,9 @@ impl Preferences {
         self.saved_filters.truncate(100);
         for filter in &mut self.saved_filters {
             filter.min_rating = filter.min_rating.min(5);
+            if filter.favorites_only {
+                filter.exclude_favorites = false;
+            }
         }
     }
 }
@@ -189,6 +194,25 @@ impl Preferences {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn saved_artist_and_favorite_filters_round_trip_and_older_filters_still_load() {
+        let older: SavedFilter =
+            serde_json::from_str(r#"{"name":"Old","favorites_only":true}"#).expect("old filter");
+        assert!(older.artist.is_empty());
+        assert!(!older.exclude_favorites);
+        let filter = SavedFilter {
+            name: "Jazz artist".into(),
+            artist: "Performer".into(),
+            genre: "Jazz".into(),
+            exclude_favorites: true,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&filter).expect("serialize filter");
+        assert_eq!(
+            serde_json::from_str::<SavedFilter>(&json).expect("restore filter"),
+            filter
+        );
+    }
     #[test]
     fn invalid_geometry_and_oversized_auto_dj_are_normalized() {
         let mut preferences = Preferences::default();

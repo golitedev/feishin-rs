@@ -18,8 +18,10 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
+mod detail;
 mod extras;
 mod icons;
+mod library;
 mod shortcuts;
 mod theme;
 use icons::{Icon, icon_button};
@@ -31,7 +33,7 @@ const TEXT: Color32 = Color32::from_rgb(222, 222, 224);
 const MUTED: Color32 = Color32::from_rgb(145, 145, 149);
 const BLUE: Color32 = Color32::from_rgb(48, 113, 255);
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Page {
     #[default]
     Home,
@@ -211,6 +213,11 @@ pub struct View {
     radio_delete_pending: Option<String>,
     smart_delete_pending: Option<String>,
     feature_index: usize,
+    artist_tracks_open: bool,
+    library_filters_open: bool,
+    library_search_open: bool,
+    exclude_favorites: bool,
+    artist_filter: Option<String>,
 
     colors: theme::Palette,
     settings_tab: extras::SettingsTab,
@@ -273,6 +280,8 @@ struct Route {
     genre: Option<String>,
     search: String,
     favorites_only: bool,
+    exclude_favorites: bool,
+    artist_filter: Option<String>,
     sort: Sort,
     folder_root: bool,
     min_rating: u8,
@@ -329,6 +338,11 @@ impl Default for View {
             radio_delete_pending: None,
             smart_delete_pending: None,
             feature_index: 0,
+            artist_tracks_open: false,
+            library_filters_open: true,
+            library_search_open: false,
+            exclude_favorites: false,
+            artist_filter: None,
             colors: theme::Palette::default(),
             settings_tab: extras::SettingsTab::default(),
             custom_theme_json: String::new(),
@@ -579,6 +593,7 @@ impl View {
         self.queue_open = name == "queue";
         self.lyrics_open = name == "lyrics";
         self.filter.clear();
+        self.artist_tracks_open = false;
         self.genre = None;
         self.favorites_only = false;
         self.history.clear();
@@ -640,6 +655,9 @@ impl View {
     pub fn navigate(&mut self, page: Page) {
         if self.page != page {
             self.page = page;
+            self.artist_tracks_open = false;
+            self.exclude_favorites = false;
+            self.artist_filter = None;
             self.filter.clear();
             self.genre = None;
             self.delete_playlist_confirm = false;
@@ -660,6 +678,8 @@ impl View {
             genre: self.genre.clone(),
             search: self.search.clone(),
             favorites_only: self.favorites_only,
+            exclude_favorites: self.exclude_favorites,
+            artist_filter: self.artist_filter.clone(),
             sort: self.sort,
             folder_root: self.folder_root,
             min_rating: self.min_rating,
@@ -704,6 +724,7 @@ impl View {
             }
         }
         if !from.same_destination(&to) {
+            self.artist_tracks_open = false;
             if self.page == from.page {
                 self.filter.clear();
                 self.genre = None;
@@ -739,6 +760,8 @@ impl View {
         self.genre = route.genre;
         self.search = route.search;
         self.favorites_only = route.favorites_only;
+        self.exclude_favorites = route.exclude_favorites;
+        self.artist_filter = route.artist_filter;
         self.sort = route.sort;
         self.min_rating = route.min_rating;
         self.descending = route.descending;
@@ -864,21 +887,32 @@ impl View {
                     .frame(Frame::new().fill(self.colors.side).inner_margin(16))
                     .show(ui, |ui| self.queue_panel(ui, &mut actions));
             }
+            let library_page = matches!(
+                self.page,
+                Page::Albums
+                    | Page::Tracks
+                    | Page::Artists
+                    | Page::AlbumArtists
+                    | Page::Favorites
+                    | Page::Genres
+            );
             egui::CentralPanel::default()
                 .frame(
                     Frame::new()
                         .fill(self.colors.bg)
                         .inner_margin(egui::Margin {
-                            left: 32,
-                            right: 32,
-                            top: 32,
+                            left: if library_page { 12 } else { 32 },
+                            right: if library_page { 20 } else { 32 },
+                            top: if library_page { 8 } else { 32 },
                             bottom: 0,
                         }),
                 )
                 .show(ui, |ui| {
                     self.banners(ui);
+                    let scroll_id =
+                        egui::IdSalt::new(("main-content", &self.page, self.route().entity_id));
                     egui::ScrollArea::vertical()
-                        .id_salt("main-content")
+                        .id_salt(scroll_id)
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             ui.set_min_width(ui.available_width());
@@ -1532,14 +1566,19 @@ impl View {
         actions.push(Action::OpenAlbum(id));
     }
     fn album_grid(&mut self, ui: &mut egui::Ui, albums: &[Album], actions: &mut Vec<Action>) {
-        let cols = ((ui.available_width() + 12.0) / (self.preferences.appearance.grid_size + 12.0))
+        let gap = if matches!(self.page, Page::Albums | Page::Favorites) {
+            16.0
+        } else {
+            12.0
+        };
+        let cols = ((ui.available_width() + gap) / (self.preferences.appearance.grid_size + gap))
             .floor()
             .max(1.0) as usize;
-        let width = ((ui.available_width() - 12.0 * (cols.saturating_sub(1) as f32)) / cols as f32)
+        let width = ((ui.available_width() - gap * (cols.saturating_sub(1) as f32)) / cols as f32)
             .max(80.0);
         for row in albums.chunks(cols) {
             ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 12.0;
+                ui.spacing_mut().item_spacing.x = gap;
                 for album in row {
                     ui.allocate_ui_with_layout(
                         vec2(width, width + 48.0),
@@ -1604,6 +1643,13 @@ impl View {
                             {
                                 self.navigate(Page::Artist);
                                 actions.push(Action::OpenArtist(album.artist_id.clone()));
+                            }
+                            if album.year > 0 {
+                                ui.label(
+                                    RichText::new(album.year.to_string())
+                                        .size(12.0)
+                                        .color(self.colors.muted),
+                                );
                             }
                         },
                     );
@@ -1748,63 +1794,24 @@ impl View {
             });
         clicked
     }
-    fn toolbar(&mut self, ui: &mut egui::Ui, title: &str, count: usize, actions: &mut Vec<Action>) {
-        ui.horizontal(|ui| {
-            heading(ui, title, 28.0);
-            ui.label(RichText::new(count.to_string()).color(self.colors.muted));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if icon_button(ui, Icon::Refresh, "Refresh library", false, false).clicked() {
-                    actions.push(Action::Refresh);
-                }
-            });
-        });
-        ui.add_space(16.0);
-        ui.horizontal(|ui| {
-            ui.add_sized(
-                [ui.available_width().min(450.0) - 145.0, 32.0],
-                egui::TextEdit::singleline(&mut self.filter)
-                    .hint_text("Search this view")
-                    .margin(vec2(10.0, 7.0)),
-            );
-            egui::ComboBox::from_id_salt("sort")
-                .selected_text(match self.sort {
-                    Sort::Title => "Title",
-                    Sort::Artist => "Artist",
-                    Sort::Year => "Year",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.sort, Sort::Title, "Title");
-                    ui.selectable_value(&mut self.sort, Sort::Artist, "Artist");
-                    ui.selectable_value(&mut self.sort, Sort::Year, "Year");
-                });
-            if icon_button(
-                ui,
-                Icon::Heart,
-                "Favorites only",
-                self.favorites_only,
-                false,
-            )
-            .clicked()
-            {
-                self.favorites_only = !self.favorites_only;
-            }
-            if let Some(genre) = self.genre.clone()
-                && ui.button(format!("{genre} ×")).clicked()
-            {
-                self.genre = None;
-            }
-        });
-        ui.menu_button("Filters", |ui| {
-            self.saved_filter_controls(ui);
-            ui.checkbox(&mut self.descending, "Descending");
-            if self.capabilities.numeric_ratings {
-                ui.add(egui::Slider::new(&mut self.min_rating, 0..=5).text("Minimum rating"));
-            }
-        });
-        ui.add_space(18.0);
-    }
     fn albums_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         self.toolbar(ui, "Albums", self.library.albums.len(), actions);
+        self.library_body(ui, actions, |view, ui, actions| {
+            view.albums_content(ui, actions)
+        });
+    }
+    fn albums_content(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+        let albums = self.filtered_albums();
+        if albums.is_empty() {
+            empty(
+                ui,
+                "No matching albums",
+                "Try another search or refresh your library.",
+            );
+        }
+        self.album_grid(ui, &albums, actions);
+    }
+    fn filtered_albums(&self) -> Vec<Album> {
         let query = self.filter.to_lowercase();
         let mut albums = self
             .library
@@ -1814,6 +1821,11 @@ impl View {
                 (a.title.to_lowercase().contains(&query)
                     || a.artist.to_lowercase().contains(&query))
                     && (!self.favorites_only || a.favorite)
+                    && (!self.exclude_favorites || !a.favorite)
+                    && self
+                        .artist_filter
+                        .as_ref()
+                        .is_none_or(|artist| &a.artist == artist)
                     && self.ratings.get(&a.id).copied().unwrap_or(0) >= self.min_rating
                     && self
                         .genre
@@ -1830,19 +1842,14 @@ impl View {
         if self.descending {
             albums.reverse();
         }
-        if albums.is_empty() {
-            empty(
-                ui,
-                "No matching albums",
-                "Try another search or refresh your library.",
-            );
-        }
-        self.album_grid(ui, &albums, actions);
+        albums
     }
     fn tracks_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         self.toolbar(ui, "Tracks", self.library.tracks.len(), actions);
-        let tracks = self.filtered_tracks(&self.library.tracks);
-        self.track_table(ui, &tracks, actions, true);
+        self.library_body(ui, actions, |view, ui, actions| {
+            let tracks = view.filtered_tracks(&view.library.tracks);
+            view.track_table(ui, &tracks, actions, true);
+        });
     }
     fn filtered_tracks<'a>(&self, tracks: &'a [Track]) -> Vec<&'a Track> {
         let q = self.filter.to_lowercase();
@@ -1853,6 +1860,11 @@ impl View {
                     || t.artist.to_lowercase().contains(&q)
                     || t.album.to_lowercase().contains(&q))
                     && (!self.favorites_only || t.favorite)
+                    && (!self.exclude_favorites || !t.favorite)
+                    && self
+                        .artist_filter
+                        .as_ref()
+                        .is_none_or(|artist| &t.artist == artist)
                     && self
                         .genre
                         .as_ref()
@@ -1872,8 +1884,10 @@ impl View {
     }
     fn artists_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         self.toolbar(ui, "Artists", self.library.artists.len(), actions);
-        let artists = self.filtered_artists(&self.library.artists);
-        self.artist_grid(ui, &artists, actions);
+        self.library_body(ui, actions, |view, ui, actions| {
+            let artists = view.filtered_artists(&view.library.artists);
+            view.artist_grid(ui, &artists, actions);
+        });
     }
     fn filtered_artists(&self, source: &[Artist]) -> Vec<Artist> {
         let q = self.filter.to_lowercase();
@@ -1882,6 +1896,11 @@ impl View {
             .filter(|a| {
                 a.name.to_lowercase().contains(&q)
                     && (!self.favorites_only || a.favorite)
+                    && (!self.exclude_favorites || !a.favorite)
+                    && self
+                        .artist_filter
+                        .as_ref()
+                        .is_none_or(|artist| &a.name == artist)
                     && self.ratings.get(&a.id).copied().unwrap_or(0) >= self.min_rating
                     && self.genre.as_ref().is_none_or(|genre| {
                         self.library.albums.iter().any(|album| {
@@ -1909,7 +1928,7 @@ impl View {
                         |ui| {
                             let (r, response) =
                                 ui.allocate_exact_size(vec2(width, width), Sense::click());
-                            self.paint_cover(ui, r, &artist.cover_id, &artist.name);
+                            self.paint_artist_cover(ui, r, &artist.cover_id, &artist.name);
                             if response.clicked() {
                                 self.selected_artist = Some(artist.clone());
                                 self.artist_albums.clear();
@@ -1959,255 +1978,6 @@ impl View {
             );
         }
     }
-    fn album_detail(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        let Some(album) = self.selected_album.clone() else {
-            empty(
-                ui,
-                "Choose an album",
-                "Browse your library to open an album.",
-            );
-            return;
-        };
-        self.hero(
-            ui,
-            Hero {
-                kind: "ALBUM",
-                title: &album.title,
-                artist: &album.artist,
-                cover: &album.cover_id,
-                info: format!(
-                    "{} tracks · {}{}",
-                    album.song_count,
-                    duration_text(album.duration),
-                    if album.year > 0 {
-                        format!(" · {}", album.year)
-                    } else {
-                        String::new()
-                    }
-                ),
-            },
-            actions,
-        );
-        ui.add_space(22.0);
-        ui.horizontal(|ui| {
-            ui.add_sized(
-                [ui.available_width() - 120.0, 32.0],
-                egui::TextEdit::singleline(&mut self.filter)
-                    .hint_text("Search")
-                    .margin(vec2(10.0, 7.0)),
-            );
-            if !album.genre.is_empty() {
-                ui.label(RichText::new(&album.genre).small().color(self.colors.muted));
-            }
-        });
-        ui.add_space(14.0);
-        let tracks = self
-            .detail_tracks
-            .iter()
-            .filter(|t| t.title.to_lowercase().contains(&self.filter.to_lowercase()))
-            .collect::<Vec<_>>();
-        self.track_table(ui, &tracks, actions, false);
-    }
-    fn artist_detail(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        let artist = self.selected_artist.clone().unwrap_or_else(|| Artist {
-            name: self
-                .artist_albums
-                .first()
-                .map(|a| a.artist.clone())
-                .unwrap_or_else(|| "Artist".into()),
-            ..Default::default()
-        });
-        self.hero(
-            ui,
-            Hero {
-                kind: "ALBUM ARTIST",
-                title: &artist.name,
-                artist: "",
-                cover: &artist.cover_id,
-                info: format!("{} albums", self.artist_albums.len()),
-            },
-            actions,
-        );
-        ui.add_space(24.0);
-        heading(ui, "Discography", 23.0);
-        ui.add_space(14.0);
-        let albums = self.artist_albums.clone();
-        self.album_grid(ui, &albums, actions);
-    }
-    fn playlist_detail(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        let Some(p) = self.selected_playlist.clone() else {
-            empty(
-                ui,
-                "Choose a playlist",
-                "Your playlists appear in the sidebar.",
-            );
-            return;
-        };
-        self.hero(
-            ui,
-            Hero {
-                kind: "PLAYLIST",
-                title: &p.name,
-                artist: "",
-                cover: &p.cover_id,
-                info: format!("{} tracks · {}", p.song_count, duration_text(p.duration)),
-            },
-            actions,
-        );
-        ui.add_space(12.0);
-        if self.connected
-            && self.capabilities.playlist_metadata
-            && ui.button("Edit playlist").clicked()
-        {
-            self.playlist_metadata_draft = self
-                .playlist_details
-                .as_ref()
-                .map(|p| p.metadata.clone())
-                .unwrap_or_else(|| PlaylistMetadata {
-                    name: p.name.clone(),
-                    ..Default::default()
-                });
-            self.editing_playlist = true;
-        }
-        if self.connected {
-            if !self.delete_playlist_confirm {
-                if ui.button("Delete playlist…").clicked() {
-                    self.delete_playlist_confirm = true;
-                }
-            } else {
-                ui.horizontal(|ui| {
-                    ui.label("Delete this playlist from the server?");
-                    if ui.button("Delete").clicked() {
-                        actions.push(Action::DeletePlaylist { id: p.id.clone() });
-                        self.delete_playlist_confirm = false;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        self.delete_playlist_confirm = false;
-                    }
-                });
-            }
-        }
-        ui.add_space(24.0);
-        let tracks = self.detail_tracks.iter().collect::<Vec<_>>();
-        self.track_table(ui, &tracks, actions, true);
-    }
-    fn hero(&mut self, ui: &mut egui::Ui, hero: Hero<'_>, actions: &mut Vec<Action>) {
-        let Hero {
-            kind,
-            title,
-            artist,
-            cover,
-            info,
-        } = hero;
-        let width = ui.available_width();
-        let height = if width > 650.0 { 250.0 } else { 200.0 };
-        let (rect, _) = ui.allocate_exact_size(vec2(width, height + 30.0), Sense::hover());
-        if (kind == "ALBUM" && self.preferences.appearance.album_background)
-            || (kind == "ALBUM ARTIST" && self.preferences.appearance.artist_background)
-        {
-            gradient(
-                ui,
-                rect.expand2(vec2(24.0, 24.0)),
-                self.artwork_tints
-                    .get(cover)
-                    .copied()
-                    .map(|color| color.gamma_multiply(0.40))
-                    .unwrap_or(Color32::from_rgb(36, 33, 34)),
-                self.colors.bg,
-            );
-        }
-        let size = height - 24.0;
-        self.paint_cover(
-            ui,
-            Rect::from_min_size(rect.min + vec2(0.0, 12.0), vec2(size, size)),
-            cover,
-            title,
-        );
-        let r = Rect::from_min_max(rect.min + vec2(size + 20.0, 35.0), rect.max);
-        ui.scope_builder(egui::UiBuilder::new().max_rect(r), |ui| {
-            ui.add_space(18.0);
-            ui.label(RichText::new(kind).size(12.0));
-            ui.add(
-                egui::Label::new(RichText::new(title).font(font_id(
-                    ui,
-                    if width > 850.0 { 40.0 } else { 29.0 },
-                    true,
-                )))
-                .truncate(),
-            );
-            ui.label(info);
-            if !artist.is_empty() {
-                ui.label(RichText::new(artist).strong());
-            }
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                if primary_icon(ui, Icon::Play, "Play").clicked() && !self.detail_tracks.is_empty()
-                {
-                    actions.push(Action::Play {
-                        tracks: self.detail_tracks.clone(),
-                        start: 0,
-                    });
-                }
-                if primary_icon(ui, Icon::Next, "Next").clicked() {
-                    actions.push(Action::QueueNext(self.detail_tracks.clone()));
-                }
-                if primary_icon(ui, Icon::Queue, "Last").clicked() {
-                    actions.push(Action::QueueLast(self.detail_tracks.clone()));
-                }
-                if let Some(id) = match kind {
-                    "ALBUM" => self.selected_album.as_ref().map(|a| a.id.clone()),
-                    "ALBUM ARTIST" => self.selected_artist.as_ref().map(|a| a.id.clone()),
-                    _ => None,
-                } && let Some(rating) = self.rating_menu(ui, &id)
-                {
-                    actions.push(if kind == "ALBUM" {
-                        Action::RateAlbum { id, rating }
-                    } else {
-                        Action::RateArtist { id, rating }
-                    });
-                }
-                if self.connected {
-                    let entity = match kind {
-                        "ALBUM" => self
-                            .selected_album
-                            .as_ref()
-                            .map(|a| (a.id.clone(), a.favorite)),
-                        "ALBUM ARTIST" => self
-                            .selected_artist
-                            .as_ref()
-                            .map(|a| (a.id.clone(), a.favorite)),
-                        _ => None,
-                    };
-                    if let Some((id, favorite)) = entity
-                        && icon_button(
-                            ui,
-                            Icon::Heart,
-                            if favorite {
-                                "Remove from favorites"
-                            } else {
-                                "Add to favorites"
-                            },
-                            favorite,
-                            false,
-                        )
-                        .clicked()
-                    {
-                        actions.push(if kind == "ALBUM" {
-                            Action::FavoriteAlbum {
-                                id,
-                                favorite: !favorite,
-                            }
-                        } else {
-                            Action::FavoriteArtist {
-                                id,
-                                favorite: !favorite,
-                            }
-                        });
-                    }
-                }
-            });
-        });
-    }
     fn rating_menu(&self, ui: &mut egui::Ui, id: &str) -> Option<u8> {
         if !self.connected
             || !self.capabilities.numeric_ratings
@@ -2250,43 +2020,57 @@ impl View {
             return;
         }
         let width = ui.available_width();
-        let artist_x = width * 0.43;
-        let album_x = width * 0.65;
-        let duration_x = width - 90.0;
+        let detailed = show_album && width >= 600.0;
+        let album_x = width * 0.36;
+        let genre_x = width * 0.59;
+        let year_x = width * 0.87;
+        let duration_x = if detailed {
+            width * 0.31
+        } else {
+            (width - 176.0).max(width * 0.7)
+        };
+        let number_x = if detailed { 12.0 } else { 40.0 };
+        let heart_x = if detailed { width - 12.0 } else { width - 47.0 };
         let (rect, _) = ui.allocate_exact_size(vec2(width, 31.0), Sense::hover());
         let p = ui.painter();
         p.line_segment(
             [rect.left_bottom(), rect.right_bottom()],
             Stroke::new(1.0, self.colors.line),
         );
-        for (x, text) in [(12.0, "#"), (50.0, "TITLE"), (duration_x, "TIME")] {
-            p.text(
-                rect.min + vec2(x, 11.0),
-                egui::Align2::LEFT_CENTER,
-                text,
-                font_id(ui, 10.0, false),
-                self.colors.text,
+        for (x, icon) in [
+            (number_x, Icon::Music),
+            (duration_x, Icon::Clock),
+            (heart_x, Icon::Heart),
+        ] {
+            icons::draw(
+                p,
+                icon,
+                Rect::from_center_size(rect.min + vec2(x, 13.0), vec2(13.0, 13.0)),
+                self.colors.muted,
             );
         }
-        if show_album && width > 700.0 {
-            p.text(
-                rect.min + vec2(artist_x, 11.0),
-                egui::Align2::LEFT_CENTER,
-                "ARTIST",
-                font_id(ui, 10.0, false),
-                self.colors.text,
-            );
-            p.text(
-                rect.min + vec2(album_x, 11.0),
-                egui::Align2::LEFT_CENTER,
-                "ALBUM",
-                font_id(ui, 10.0, false),
-                self.colors.text,
-            );
+        p.text(
+            rect.min + vec2(if detailed { 34.0 } else { 88.0 }, 11.0),
+            egui::Align2::LEFT_CENTER,
+            "TITLE",
+            font_id(ui, 12.0, false),
+            self.colors.muted,
+        );
+        if detailed {
+            for (x, label) in [(album_x, "ALBUM"), (genre_x, "GENRE"), (year_x, "YEAR")] {
+                p.text(
+                    rect.min + vec2(x, 11.0),
+                    egui::Align2::LEFT_CENTER,
+                    label,
+                    font_id(ui, 12.0, false),
+                    self.colors.muted,
+                );
+            }
         }
         // The outer page already owns scrolling. Reserve off-screen rows instead of
         // introducing nested scrolling or constructing widgets for every library item.
-        let stride = 38.0 + ui.spacing().item_spacing.y;
+        let stride = if detailed { 66.0 } else { 40.0 };
+        let row_height = stride - ui.spacing().item_spacing.y;
         let top = ui.cursor().top();
         let first =
             (((ui.clip_rect().top() - top) / stride).floor().max(0.0) as usize).min(tracks.len());
@@ -2297,8 +2081,16 @@ impl View {
         ui.add_space(first as f32 * stride);
         ui.skip_ahead_auto_ids(first);
         for (index, track) in tracks.iter().enumerate().skip(first).take(last - first) {
+            let playlist_index = if self.page == Page::Playlist {
+                self.detail_tracks
+                    .iter()
+                    .position(|original| std::ptr::eq(original, *track))
+                    .unwrap_or(index)
+            } else {
+                index
+            };
             let playing = self.queue.current_track().is_some_and(|t| t.id == track.id);
-            let (rect, response) = ui.allocate_exact_size(vec2(width, 38.0), Sense::click());
+            let (rect, response) = ui.allocate_exact_size(vec2(width, row_height), Sense::click());
             if response.hovered() {
                 ui.painter().rect_filled(rect, 3.0, self.colors.surface);
             }
@@ -2307,63 +2099,105 @@ impl View {
             } else {
                 self.colors.text
             };
-            let title_end = if show_album && width > 700.0 {
-                artist_x - 12.0
-            } else {
-                duration_x - 14.0
-            };
+            let title_end = duration_x - 14.0;
             ui.painter().text(
-                rect.min + vec2(12.0, 19.0),
+                pos2(rect.left() + number_x, rect.center().y),
                 egui::Align2::LEFT_CENTER,
-                if track.number > 0 {
+                if track.number > 0 && self.page == Page::Album {
                     track.number.to_string()
                 } else {
-                    (index + 1).to_string()
+                    (if self.page == Page::Playlist {
+                        playlist_index
+                    } else {
+                        index
+                    } + 1)
+                        .to_string()
                 },
                 font_id(ui, 12.0, false),
                 self.colors.muted,
             );
-            clipped_text(
-                ui,
-                Rect::from_min_max(
-                    rect.min + vec2(50.0, 0.0),
-                    pos2(rect.left() + title_end, rect.bottom()),
-                ),
-                &track.title,
-                13.0,
-                color,
-            );
-            if show_album && width > 700.0 {
+            if detailed {
+                self.paint_cover(
+                    ui,
+                    Rect::from_min_size(rect.min + vec2(34.0, 0.0), vec2(row_height, row_height)),
+                    &track.cover_id,
+                    &track.title,
+                );
                 clipped_text(
                     ui,
                     Rect::from_min_max(
-                        rect.min + vec2(artist_x, 0.0),
-                        pos2(rect.left() + album_x - 12.0, rect.bottom()),
+                        rect.min + vec2(100.0, 0.0),
+                        pos2(rect.left() + title_end, rect.top() + row_height * 0.6),
+                    ),
+                    &track.title,
+                    14.0,
+                    color,
+                );
+                clipped_text(
+                    ui,
+                    Rect::from_min_max(
+                        rect.min + vec2(100.0, row_height * 0.6),
+                        pos2(rect.left() + title_end, rect.bottom()),
                     ),
                     &track.artist,
                     12.0,
                     self.colors.muted,
                 );
+            } else {
+                clipped_text(
+                    ui,
+                    Rect::from_min_max(
+                        rect.min + vec2(88.0, 0.0),
+                        pos2(rect.left() + title_end, rect.bottom()),
+                    ),
+                    &track.title,
+                    14.0,
+                    color,
+                );
+            }
+            if detailed {
                 clipped_text(
                     ui,
                     Rect::from_min_max(
                         rect.min + vec2(album_x, 0.0),
-                        pos2(rect.left() + duration_x - 12.0, rect.bottom()),
+                        pos2(rect.left() + genre_x - 12.0, rect.bottom()),
                     ),
                     &track.album,
                     12.0,
                     self.colors.muted,
                 );
+                clipped_text(
+                    ui,
+                    Rect::from_min_max(
+                        rect.min + vec2(genre_x, 0.0),
+                        pos2(rect.left() + year_x - 12.0, rect.bottom()),
+                    ),
+                    &track.genre,
+                    12.0,
+                    self.colors.muted,
+                );
+                if track.year > 0 {
+                    clipped_text(
+                        ui,
+                        Rect::from_min_max(
+                            rect.min + vec2(year_x, 0.0),
+                            pos2(rect.left() + heart_x - 18.0, rect.bottom()),
+                        ),
+                        &track.year.to_string(),
+                        12.0,
+                        self.colors.muted,
+                    );
+                }
             }
             ui.painter().text(
-                rect.min + vec2(duration_x, 19.0),
+                pos2(rect.left() + duration_x, rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 duration_text(track.duration),
                 font_id(ui, 12.0, false),
                 self.colors.muted,
             );
             let heart_rect = Rect::from_center_size(
-                pos2(rect.right() - 18.0, rect.center().y),
+                pos2(rect.left() + heart_x, rect.center().y),
                 vec2(26.0, 26.0),
             );
             let heart = ui.interact(
@@ -2371,16 +2205,18 @@ impl View {
                 ui.scope_id().with(("favorite", index, &track.id)),
                 Sense::click(),
             );
-            icons::draw(
-                ui.painter(),
-                Icon::Heart,
-                heart_rect.shrink(6.0),
-                if track.favorite {
-                    self.colors.accent
-                } else {
-                    self.colors.muted
-                },
-            );
+            if response.hovered() || heart.hovered() || track.favorite {
+                icons::draw(
+                    ui.painter(),
+                    Icon::Heart,
+                    heart_rect.shrink(6.0),
+                    if track.favorite {
+                        self.colors.accent
+                    } else {
+                        self.colors.muted
+                    },
+                );
+            }
             if heart.clicked() {
                 actions.push(Action::Favorite {
                     track_id: track.id.clone(),
@@ -2444,19 +2280,21 @@ impl View {
                             && self.capabilities.playlist_reorder
                             && let Some(p) = &self.selected_playlist
                         {
-                            if index > 0 && ui.button("Move up").clicked() {
+                            if playlist_index > 0 && ui.button("Move up").clicked() {
                                 actions.push(Action::MovePlaylistTrack {
                                     id: p.id.clone(),
-                                    from: index,
-                                    to: index - 1,
+                                    from: playlist_index,
+                                    to: playlist_index - 1,
                                 });
                                 ui.close();
                             }
-                            if index + 1 < tracks.len() && ui.button("Move down").clicked() {
+                            if playlist_index + 1 < self.detail_tracks.len()
+                                && ui.button("Move down").clicked()
+                            {
                                 actions.push(Action::MovePlaylistTrack {
                                     id: p.id.clone(),
-                                    from: index,
-                                    to: index + 1,
+                                    from: playlist_index,
+                                    to: playlist_index + 1,
                                 });
                                 ui.close();
                             }
@@ -2467,7 +2305,7 @@ impl View {
                         {
                             actions.push(Action::RemovePlaylistTrack {
                                 playlist_id: playlist.id.clone(),
-                                index,
+                                index: playlist_index,
                             });
                             ui.close();
                         }
@@ -3138,33 +2976,6 @@ fn primary(ui: &mut egui::Ui, text: &str) -> egui::Response {
             .min_size(vec2(88.0, 34.0)),
     )
 }
-fn primary_icon(ui: &mut egui::Ui, icon: Icon, text: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(92.0, 34.0), Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, text));
-    ui.painter().rect_filled(
-        rect,
-        16.0,
-        if response.hovered() {
-            Color32::WHITE
-        } else {
-            TEXT
-        },
-    );
-    icons::draw(
-        ui.painter(),
-        icon,
-        Rect::from_center_size(pos2(rect.left() + 21.0, rect.center().y), vec2(12.0, 12.0)),
-        Color32::BLACK,
-    );
-    ui.painter().text(
-        pos2(rect.left() + 35.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        text,
-        FontId::proportional(13.0),
-        Color32::BLACK,
-    );
-    response
-}
 
 fn empty(ui: &mut egui::Ui, title: &str, description: &str) {
     ui.add_space(24.0);
@@ -3406,6 +3217,25 @@ mod tests {
                 assert!(frame(&mut view, input).is_empty());
             }
         }
+    }
+
+    #[test]
+    fn back_navigation_restores_artist_and_excluded_favorite_filters() {
+        let mut view = View {
+            page: Page::Albums,
+            artist_filter: Some("Performer".into()),
+            exclude_favorites: true,
+            ..Default::default()
+        };
+        let from = view.route();
+        view.navigate(Page::Home);
+        view.finish_navigation(from, &[]);
+        assert!(view.artist_filter.is_none());
+        assert!(!view.exclude_favorites);
+        view.go_back(&mut vec![]);
+        assert_eq!(view.page, Page::Albums);
+        assert_eq!(view.artist_filter.as_deref(), Some("Performer"));
+        assert!(view.exclude_favorites);
     }
 
     #[test]

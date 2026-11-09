@@ -8,11 +8,13 @@ The current observed reference is the official Feishin 1.17.0 Linux desktop bina
 
 Current native work follows the observed title bar, 400 px sidebar, Inter typography, single featured-album hero, four-column genre tiles, album cards, playback strip, settings tabs, menus, and fullscreen player. Inter and Poppins are separately sourced OFL fonts. Native eframe screenshots are captured under Xvfb at 1440 × 900, using the same original fixture library as the observed application. Matching key geometry is evidence of progress, not a pixel-identical audit of every state.
 
+The detail/library follow-up compares live album, artist, Albums, Tracks, Favorites, and Genres views. Native detail headers now use the observed 225 px cover at (432, 113), 44 px titles, compact play/queue/next buttons, right-aligned favorites/ratings, and artwork-colored background. Album pages add genre/artist navigation and related albums; artist pages switch between discography and tracks. Library pages add the play/title header, collapsible filter column, artwork/subtitle track rows, and genre counts. Missing artist covers use original Rust-drawn star placeholders. Page/entity-specific scrolling and navigation preserve library state. These changes improve the compared views; they do not establish exact visual parity.
+
 ## Working workflows
 
 | Area | Implemented behavior | Limits |
 | --- | --- | --- |
-| Library | Albums, tracks, artists, album artists, genres, folders, server search, local sorting/filtering, saved filters, quick search | Full library is initially fetched; large-library performance remains unmeasured |
+| Library | Albums, tracks, artists, album artists, genre counts, folders, server search, local sorting/filtering, saved filters, quick search, filter column and filtered collection playback, related albums, artist discography/track tabs | Full library is initially fetched; large-library performance remains unmeasured; advanced filter operators and configurable table columns remain incomplete |
 | Favorites and ratings | Track, album, and artist favorites; 0–5 numeric ratings; minimum-rating filters | Numeric ratings require Subsonic support; server permissions still apply |
 | Playlists | Create/delete, add/remove distinct occurrences, metadata/public visibility, move tracks, preserve duplicate songs | Native Navidrome smart rules use an editable JSON criteria object; no graphical rule builder |
 | Smart playlists | Navidrome native authentication and list/create/update/delete rules | Native API is version-sensitive; verified with Navidrome 0.64.2 |
@@ -37,6 +39,7 @@ See [validation](validation.md) for executed commands and counts. Screenshots an
 
 - Complete the remaining workflows in the limits column and compare their behavior against the running reference. Do not substitute a visually present control for working behavior.
 - Audit every screen, context menu, modal, keyboard/focus state, narrow layout, loading/error state, and fullscreen view against upstream. Existing native screenshots do not prove identity.
+- Complete artist biography/external-link data, advanced filter controls, table customization and selection workflows, and the remaining context-menu/dialog layouts. Library pagination, search/header details, spacing and icon shapes still differ from the reference.
 - Add live Jellyfin compatibility evidence, large-library measurements, a real sound-device session, hardware rendering checks, and desktop accessibility assessment.
 - Exercise OS credential persistence with a real unlocked desktop keyring, actual desktop notifications/media overlays, Windows named pipes at runtime, and macOS integration.
 - Validate release builds and platform installers on their target systems before advertising distribution support.
