@@ -4,7 +4,7 @@ Status: native implementation with advanced server and playback workflows. See p
 
 ## Product boundary
 
-feishin-rs is a native Rust desktop music client. Rust owns the interface, server communication, library data, queue, settings, and control logic. A separately installed MPV process owns media decoding and audio output.
+feishin-rs is a native Rust port of Feishin. Rust owns the interface, server communication, library data, queue, settings, and control logic. A separately installed MPV process owns media decoding and audio output.
 
 Use egui for the interface and eframe for the desktop event loop and rendering integration. PDFCraft demonstrates this arrangement; its PDF engine and large crate hierarchy are not needed here. Begin with focused components and split crates where their boundaries are useful.
 

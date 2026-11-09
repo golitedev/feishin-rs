@@ -1692,7 +1692,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--help" | "-h" => {
                 println!(
-                    "feishin-rs\n\nNative Rust music client with MPV playback.\n\n  --demo                  Show an explicitly labeled sample library\n  --demo-page VIEW        Select a demo view (requires --demo)\n  --screenshot FILE.png   Capture the native window and exit\n  --connect-profile JSON  Connect a saved server profile for local checks\n  --password-file FILE    Read the profile password from a private file\n  --version               Show the version\n\nSettings: FEISHIN_RS_CONFIG_DIR overrides the platform config directory.\nPasswords stay in memory unless OS credential storage is explicitly selected."
+                    "feishin-rs\n\nNative Rust port of Feishin with MPV playback.\n\n  --demo                  Show an explicitly labeled sample library\n  --demo-page VIEW        Select a demo view (requires --demo)\n  --screenshot FILE.png   Capture the native window and exit\n  --connect-profile JSON  Connect a saved server profile for local checks\n  --password-file FILE    Read the profile password from a private file\n  --version               Show the version\n\nSettings: FEISHIN_RS_CONFIG_DIR overrides the platform config directory.\nPasswords stay in memory unless OS credential storage is explicitly selected."
                 );
                 return Ok(());
             }

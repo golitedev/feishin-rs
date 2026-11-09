@@ -1,6 +1,6 @@
 # Feishin parity and validation
 
-Status: 2026-11-09. The native Rust implementation has substantial server, library, and MPV functionality. Full feature parity and pixel identity are not established. Controls, protocol support, live-server evidence, and visual similarity are separate acceptance criteria.
+Status: 2026-11-09. The native Rust port of Feishin has substantial server, library, and MPV functionality. Full feature parity and pixel identity are not established. Controls, protocol support, live-server evidence, and visual similarity are separate acceptance criteria.
 
 ## Reference and visual evidence
 

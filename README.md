@@ -1,10 +1,10 @@
 # feishin-rs
 
-A native Rust music client inspired by [Feishin](https://github.com/jeffvli/feishin), with MPV as its only playback engine.
+A native Rust port of [Feishin](https://github.com/jeffvli/feishin), with MPV as its only playback engine.
 
 ## Status
 
-The native Rust application supports server-backed listening, library management, advanced MPV settings, and persistent preferences. Full Feishin parity and an identical interface remain under development; the [parity record](docs/parity.md) lists implemented workflows and outstanding work.
+The Rust port supports server-backed listening, library management, advanced MPV settings, and persistent preferences. Full Feishin parity and an identical interface remain under development; the [parity record](docs/parity.md) lists implemented workflows and outstanding work.
 
 Implemented workflows include album/artist/track/folder browsing, favorites, ratings, editable and smart playlists, internet radio, original-file downloads, synchronized lyrics, saved filters, multiple servers, themes, configurable shortcuts, notifications, and Linux MPRIS. Playback uses MPV for output devices, ReplayGain, equalization, speed/pitch, pause/resume fades, audio statistics, live level meters, and prepared queue transitions. Availability depends on the server protocol and account permissions. Tests include a real disposable Navidrome server and real MPV with synthetic media.
 
